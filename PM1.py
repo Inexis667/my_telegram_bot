@@ -1,3 +1,4 @@
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram import F
@@ -8,22 +9,53 @@ BOT_TOKEN = "8285221368:AAGeHopGEPs22eZfXbA-U_-Fdn9tqpeuDwM"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-@dp.message(Command("start"))
-async def send_hello(message: types.Message):
-    user_name = message.from_user.first_name
-    await message.answer(f"Привет, {user_name}!.\nЯ Бот-Переводчик, я помогу тебе переводить текст на другом языке!")
+@dp.message(Command("calc"))
+async def calc(message: types.Message):
+    try:
+        parts = message.text.split()
 
-@dp.message(Command("hello"))
-async def send_hello(message: types.Message):
-    await message.answer("Привет! Я твой первый Telegram-бот!")
+        if len(parts) != 4:
+            await message.answer("⚠️ Формат: /calc число операция число\nПример: /calc 10 + 5")
+            return
 
-@dp.message(Command("help"))
-async def send_help(message: types.Message):
-    await message.answer('Доступные команды:\n/start - начать\n/help — помощь\n/hello — поздороваться\n/about — обо мне.')
+        _, num1, op, num2 = parts
 
-@dp.message(Command("about"))
-async def send_about(message: types.Message):
-    await message.answer('Я создан для перевода текста с других языков. Обращайся в любой момент! ')
+        num1 = float(num1)
+        num2 = float(num2)
+
+        if op == "+":
+            result = num1 + num2
+        elif op == "-":
+            result = num1 - num2
+        elif op == "*":
+            result = num1 * num2
+        elif op == "/":
+            if num2 == 0:
+                await message.answer("❌ Ошибка: деление на 0 запрещено.")
+                return
+            result = num1 / num2
+        else:
+            await message.answer("⚙️ Поддерживаются только операции: +, -, *, /")
+            return
+
+        await message.answer(f"✅ Результат: {result}")
+
+    except ValueError:
+        await message.answer("⚠️ Ошибка: введите корректные числа.")
+    except Exception as e:
+        await message.answer(f"⚙️ Произошла ошибка: {type(e).__name__}")
+
+@dp.errors()
+async def global_error_handler(update, exception):
+    try:
+        if isinstance(exception, TelegramBadRequest):
+            await update.message.answer("⚠️ Telegram не принял запрос (возможно, слишком длинный текст).")
+        else:
+            await update.message.answer("⚙️ Что-то пошло не так... Попробуй ещё раз.")
+    except Exception:
+        # Если даже отправка сообщения вызвала ошибку — просто игнорируем
+        pass
+
 
 async def main():
     print("Бот запущен...")

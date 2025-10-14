@@ -12,10 +12,14 @@ dp = Dispatcher()
 users = set()
 first_start_times = {}
 
+user_names = {}
+user_notes = {}
+
 @dp.message(Command("start"))
 async def send_hello(message: types.Message):
     user_id = message.from_user.id
     user_name = message.from_user.first_name
+    first_name = message.from_user.first_name or "Пользователь"
 
     if user_id not in first_start_times:
         first_start_times[user_id] = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -23,20 +27,75 @@ async def send_hello(message: types.Message):
     if user_id not in users:
         users.add(user_id)
         await message.answer(f"Привет, {user_name}! 👋\n"
-                         f"Я Эхо-Бот и Бот-Переводчик. Я помогу тебе переводить тексты на другие языки, а также повторю твое сообщение!. \n\n"
+                         f"Я Бот-Переводчик. Я помогу тебе переводить тексты на другие языки!. \n\n"
                          f"Ты теперь в списке пользователей! 💾"
                          f"Используй команды:\n"
                          f"/help — помощь по боту\n"
                          f"/about — обо мне\n"
                          f"/info — информация о тебе\n"
-                         f"/mood — настроение бота 🎭\n\n"
+                         f"/mood — настроение бота 🎭\n"
+                         f"/menu — меню с кнопками 📋"
         )
     else:
         await message.answer(f"Снова привет, {user_name}! Рад тебя видеть 😊")
 
-@dp.message(Command("hello"))
-async def send_hello(message: types.Message):
-    await message.answer("Привет! Я твой первый Telegram-бот!")
+@dp.message(Command("menu"))
+async def show_menu(message: types.Message):
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(text="🔹 О боте", callback_data="about_bot"),
+            types.InlineKeyboardButton(text="👨‍💻 Разработчик", callback_data="developer"),
+        ],
+        [
+            types.InlineKeyboardButton(text="🌐 GitHub", url="https://github.com/Inexis667")
+        ]
+    ])
+    await message.answer("📋 Главное меню:", reply_markup=keyboard)
+
+@dp.callback_query(F.data == "about_bot")
+async def about_bot_callback(callback_query: types.CallbackQuery):
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"),
+            types.InlineKeyboardButton(text="⚙️ Функции", callback_data="bot_functions"),
+        ]
+    ])
+    await callback_query.message.edit_text(
+        "🤖 Я — Бот-Переводчик на Python (Aiogram)!\n"
+        "Моя цель — помогать людям переводить текст с разных языков мира.",
+        reply_markup=keyboard
+    )
+
+@dp.callback_query(F.data == "bot_functions")
+async def bot_functions_callback(callback_query: types.CallbackQuery):
+    text = (
+        "⚙️ <b>Функции бота:</b>\n"
+        "— Отвечает на команды /start, /help, /about, /info, /mood\n"
+        "— Реагирует на фразы «привет», «что делаешь», «пока» и т.д.\n"
+        "— Распознаёт фото и стикеры\n"
+        "— Отображает меню с кнопками 📋"
+    )
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="🔙 Назад", callback_data="about_bot")]
+    ])
+    await callback_query.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+@dp.callback_query(F.data == "developer")
+async def developer_callback(callback_query: types.CallbackQuery):
+    await callback_query.answer("Разработчик: Аманшукур Алижан 👨‍💻", show_alert=True)
+
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu_callback(callback_query: types.CallbackQuery):
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(text="🔹 О боте", callback_data="about_bot"),
+            types.InlineKeyboardButton(text="👨‍💻 Разработчик", callback_data="developer"),
+        ],
+        [
+            types.InlineKeyboardButton(text="🌐 GitHub", url="https://github.com/Inexis667")
+        ]
+    ])
+    await callback_query.message.edit_text("📋 Главное меню:", reply_markup=keyboard)
 
 @dp.message(Command("help"))
 async def send_help(message: types.Message):
@@ -45,10 +104,12 @@ async def send_help(message: types.Message):
         "💬 /start — начать работу с ботом\n"
         "ℹ️ /about — информация о проекте\n"
         "👤 /info — данные о пользователе\n"
-        "🎭 /mood — текущее настроение бота\n\n"
+        "🎭 /mood — текущее настроение бота\n"
+        "🗒 /setname &lt;имя&gt; — установить имя\n"
+        "📘 /addnote &lt;заголовок&gt;; &lt;текст&gt; — добавить заметку\n"
+        "📋 /notes — список заметок\n"
         "А ещё можешь написать мне фразы вроде:\n"
-        "«Привет», «Как дела», «Что делаешь», «Пока»\n\n"
-        "❓ Просто напиши сообщение — я повторю его!\n\n"
+        "«Привет», «Как дела», «Что делаешь», «Пока»\n"
         "❓ Если напишешь вопрос (с '?'), я отреагирую особым образом 😉\n"
         "Если введёшь неизвестную команду — подскажу 😉",
         parse_mode="HTML"
@@ -59,28 +120,25 @@ async def send_about(message: types.Message):
     await message.answer(
         "📘 <b>О проекте:</b>\n\n"
         "Автор: <b>Аманшукур Алижан</b>\n"
-        "Проект: <i>Учебный Эхо-Бот и Бот-Переводчик на Python (Aiogram)</i>\n\n"
-        "🎯 Функции:\n"
-        "— Отвечает на команды /start, /help, /about, /info\n"
-        "— Переводит текст на любой другой язык\n"
-        "— Повторяет текст пользователя\n"
-        "— Распознаёт фото и стикеры\n"
-        "— Реагирует на фразы «привет», «как дела», «что делаешь», «пока»\n"
-        "— Понимает вопросы\n"
-        "— Отвечает случайными вариантами\n"
-        "— Может показать настроение 🥳"
-        "— Проверяет тип текста (число, текст, смешанное)\n",
+        "Проект: <i>Учебный Бот-Переводчик на Python (Aiogram)</i>\n",
         parse_mode="HTML"
     )
 
 @dp.message(Command("info"))
 async def send_info(message: types.Message):
-    user = message.from_user
-    start_time = first_start_times.get(user.id, datetime.now().strftime("%d.%m.%Y %H:%M"))
+    user_id = message.from_user.id
+
+    name = user_names.get(user_id, message.from_user.first_name)
+    username = f"@{message.from_user.username}" if message.from_user.username else "—"
+
+    start_time = first_start_times.get(
+        user_id, datetime.now().strftime("%d.%m.%Y %H:%M")
+    )
+
     await message.answer(
         f"👤 <b>Информация о тебе:</b>\n\n"
-        f"🪪 Имя: <b>{user.full_name}</b>\n"
-        f"🆔 Telegram ID: <code>{user.id}</code>\n"
+        f"🪪 Имя: <b>{name}</b>\n"
+        f"🆔 Telegram ID: <code>{user_id}</code>\n"
         f"🕒 Первый запуск: {start_time}",
         parse_mode="HTML"
     )
@@ -89,6 +147,74 @@ async def send_info(message: types.Message):
 async def send_mood(message: types.Message):
     moods = ["😊 Отличное!", "😐 Нормальное", "😴 Сонное", "🤩 Замечательное!", "🤔 Задумчивое"]
     await message.answer(f"🎭 Настроение бота: {random.choice(moods)}")
+
+user_name = None  # Имя пользователя
+notes = []  # Список заметок
+
+
+@dp.message(Command("setname"))
+async def set_name(message: types.Message):
+    user_id = message.from_user.id
+    text = message.text or ""
+    args = text.split(maxsplit=1)
+
+    if len(args) < 2 or not args[1].strip():
+        await message.answer("❌ Укажи имя. Пример: /setname Алижан")
+        return
+
+    name = args[1].strip()
+    user_names[user_id] = name
+    await message.answer(f"✅ Имя сохранено: <b>{name}</b>", parse_mode="HTML")
+
+
+@dp.message(Command("hello"))
+async def send_hello(message: types.Message):
+    user_id = message.from_user.id
+    name = user_names.get(user_id)
+
+    if not name:
+        await message.answer("⚠️ Сначала установи имя с помощью команды /setname &lt;имя&gt;", parse_mode="HTML")
+        return
+
+    await message.answer(f"👋 Привет, {name}!")
+
+
+@dp.message(Command("addnote"))
+async def add_note(message: types.Message):
+    user_id = message.from_user.id
+    text = message.text or ""
+    args = text.split(maxsplit=1)
+
+    if len(args) < 2:
+        await message.answer("❌ Укажи заметку в формате:\n/addnote Заголовок; Текст")
+        return
+
+    data = args[1].split(";", maxsplit=1)
+    if len(data) < 2:
+        await message.answer(
+            "⚠️ Раздели заголовок и текст с помощью ';'\nПример: /addnote Покупки; Молоко, хлеб, масло")
+        return
+
+    title = data[0].strip()
+    note_text = data[1].strip()
+
+    if user_id not in user_notes:
+        user_notes[user_id] = []
+
+    user_notes[user_id].append({"title": title, "text": note_text})
+    await message.answer(f"📝 Заметка добавлена:\n<b>{title}</b> — {note_text}", parse_mode="HTML")
+
+@dp.message(Command("notes"))
+async def show_notes(message: types.Message):
+    user_id = message.from_user.id
+    notes = user_notes.get(user_id, [])
+
+    if not notes:
+        await message.answer("📭 Список заметок пуст.")
+        return
+
+    text = "\n\n".join([f"📝 <b>{note['title']}</b> — {note['text']}" for note in notes])
+    await message.answer(text, parse_mode="HTML")
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
@@ -126,16 +252,6 @@ async def echo_message(message: types.Message):
         await message.answer(random.choice(goodbyes))
     else:
         await message.answer("😅 Я пока не знаю, как ответить.")
-
-    #print(f"[Текст от {message.from_user.first_name}]: {text}")
-    #if text.isdigit():
-    #    msg_type = "Это число!"
-    #elif text.isalpha():
-    #    msg_type = "Это текст!"
-    #else:
-    #    msg_type = "Смешанный ввод!"
-
-    #await message.answer(f"Ты сказал: {text}\n{msg_type}")
 
 async def main():
     print("Бот запущен...")
