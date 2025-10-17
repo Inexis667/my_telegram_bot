@@ -1,61 +1,67 @@
-
+import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram import F
+from aiogram.types.error_event import ErrorEvent
 import asyncio
+import math
 
 BOT_TOKEN = "8285221368:AAGeHopGEPs22eZfXbA-U_-Fdn9tqpeuDwM"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+@dp.message(Command("divide"))
+async def divide(message: types.Message):
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            await message.answer("⚠️ Формат команды: /divide <число1> <число2>")
+            return
+
+        _, a, b = parts
+        a = float(a)
+        b = float(b)
+
+        if b == 0:
+            await message.answer("❌ Деление на ноль невозможно")
+            return
+
+        await message.answer(f"✅ Результат: {a / b}")
+
+    except ValueError:
+        await message.answer("⚠️ Введите два числа, например: /divide 10 2")
+    except Exception:
+        await message.answer("⚠️ Что-то пошло не так, попробуй позже")
+
 @dp.message(Command("calc"))
 async def calc(message: types.Message):
     try:
-        parts = message.text.split()
+        # Получаем выражение после команды
+        expr = message.text.replace("/calc", "").strip()
 
-        if len(parts) != 4:
-            await message.answer("⚠️ Формат: /calc число операция число\nПример: /calc 10 + 5")
+        if not expr:
+            await message.answer("⚠️ Укажи выражение, например: /calc 2 + 3 * 4")
             return
 
-        _, num1, op, num2 = parts
-
-        num1 = float(num1)
-        num2 = float(num2)
-
-        if op == "+":
-            result = num1 + num2
-        elif op == "-":
-            result = num1 - num2
-        elif op == "*":
-            result = num1 * num2
-        elif op == "/":
-            if num2 == 0:
-                await message.answer("❌ Ошибка: деление на 0 запрещено.")
-                return
-            result = num1 / num2
-        else:
-            await message.answer("⚙️ Поддерживаются только операции: +, -, *, /")
-            return
+        allowed_names = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
+        result = eval(expr, {"__builtins__": {}}, allowed_names)
 
         await message.answer(f"✅ Результат: {result}")
 
-    except ValueError:
-        await message.answer("⚠️ Ошибка: введите корректные числа.")
-    except Exception as e:
-        await message.answer(f"⚙️ Произошла ошибка: {type(e).__name__}")
+    except ZeroDivisionError:
+        await message.answer("❌ Деление на ноль невозможно")
+    except Exception:
+        await message.answer("Неверное выражение!")
+
 
 @dp.errors()
-async def global_error_handler(update, exception):
+async def global_error_handler(event: ErrorEvent):
+    print("Ошибка:", event.exception)
     try:
-        if isinstance(exception, TelegramBadRequest):
-            await update.message.answer("⚠️ Telegram не принял запрос (возможно, слишком длинный текст).")
-        else:
-            await update.message.answer("⚙️ Что-то пошло не так... Попробуй ещё раз.")
+        if event.update and event.update.message:
+            await event.update.message.answer("⚠️ Внутренняя ошибка! Попробуй позже.")
     except Exception:
-        # Если даже отправка сообщения вызвала ошибку — просто игнорируем
         pass
-
 
 async def main():
     print("Бот запущен...")

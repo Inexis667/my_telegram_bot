@@ -1,0 +1,22 @@
+{
+    "7132674521": {
+        "messages": 25,
+        "commands": {
+            "/start": 5,
+            "/help": 3,
+            "/info": 1,
+            "/menu": 8,
+            "/translate": 7,
+            "/about": 1
+        }
+    },
+    "7191831551": {
+        "messages": 15,
+        "commands": {
+            "/start": 1,
+            "/menu": 10,
+            "/mood": 3,
+            "/help": 1
+        }
+    }
+}
