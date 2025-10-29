@@ -1,67 +1,61 @@
-import logging
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types.error_event import ErrorEvent
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
 import asyncio
-import math
+import logging
 
 BOT_TOKEN = "8285221368:AAGeHopGEPs22eZfXbA-U_-Fdn9tqpeuDwM"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-@dp.message(Command("divide"))
-async def divide(message: types.Message):
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            await message.answer("⚠️ Формат команды: /divide <число1> <число2>")
-            return
+logging.basicConfig(level=logging.INFO)
 
-        _, a, b = parts
-        a = float(a)
-        b = float(b)
-
-        if b == 0:
-            await message.answer("❌ Деление на ноль невозможно")
-            return
-
-        await message.answer(f"✅ Результат: {a / b}")
-
-    except ValueError:
-        await message.answer("⚠️ Введите два числа, например: /divide 10 2")
-    except Exception:
-        await message.answer("⚠️ Что-то пошло не так, попробуй позже")
-
-@dp.message(Command("calc"))
-async def calc(message: types.Message):
-    try:
-        # Получаем выражение после команды
-        expr = message.text.replace("/calc", "").strip()
-
-        if not expr:
-            await message.answer("⚠️ Укажи выражение, например: /calc 2 + 3 * 4")
-            return
-
-        allowed_names = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
-        result = eval(expr, {"__builtins__": {}}, allowed_names)
-
-        await message.answer(f"✅ Результат: {result}")
-
-    except ZeroDivisionError:
-        await message.answer("❌ Деление на ноль невозможно")
-    except Exception:
-        await message.answer("Неверное выражение!")
+class FoodForm(StatesGroup):
+    name = State()
+    dish = State()
+    rating = State()
 
 
-@dp.errors()
-async def global_error_handler(event: ErrorEvent):
-    print("Ошибка:", event.exception)
-    try:
-        if event.update and event.update.message:
-            await event.update.message.answer("⚠️ Внутренняя ошибка! Попробуй позже.")
-    except Exception:
-        pass
+@dp.message(Command("food"))
+async def start_food(message: types.Message, state: FSMContext):
+    await message.answer("Привет! Как тебя зовут?")
+    await state.set_state(FoodForm.name)
+
+
+@dp.message(FoodForm.name)
+async def get_name(message: types.Message, state: FSMContext):
+    await state.update_data(name=message.text)
+    await message.answer("Какое твоё любимое блюдо?")
+    await state.set_state(FoodForm.dish)
+
+
+@dp.message(FoodForm.dish)
+async def get_dish(message: types.Message, state: FSMContext):
+    await state.update_data(dish=message.text)
+    await message.answer("Оцени его от 1 до 5 ⭐️")
+    await state.set_state(FoodForm.rating)
+
+
+@dp.message(FoodForm.rating)
+async def get_rating(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    name = data["name"]
+    dish = data["dish"]
+    rating = message.text
+
+    await message.answer(
+        f"🍽 Имя: {name}\nЛюбимое блюдо: {dish}\nОценка: {rating}⭐️"
+    )
+
+    await state.clear()
+
+
+@dp.message(Command("cancel"))
+async def cancel(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Действие отменено. Вы можете начать заново командой /food.")
 
 async def main():
     print("Бот запущен...")

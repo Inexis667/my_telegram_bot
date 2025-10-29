@@ -1,22 +1,46 @@
 {
     "7132674521": {
-        "messages": 25,
+        "messages": 57,
         "commands": {
-            "/start": 5,
-            "/help": 3,
-            "/info": 1,
-            "/menu": 8,
-            "/translate": 7,
-            "/about": 1
+            "/start": 13,
+            "/help": 5,
+            "/info": 2,
+            "/menu": 15,
+            "/translate": 19,
+            "/about": 3
         }
     },
     "7191831551": {
-        "messages": 15,
+        "messages": 24,
+        "commands": {
+            "/start": 2,
+            "/menu": 12,
+            "/mood": 3,
+            "/help": 1,
+            "/translate": 6
+        }
+    },
+    "6037866365": {
+        "messages": 3,
         "commands": {
             "/start": 1,
-            "/menu": 10,
-            "/mood": 3,
-            "/help": 1
+            "/translate": 2
+        }
+    },
+    "5031076485": {
+        "messages": 6,
+        "commands": {
+            "/start": 1,
+            "/info": 1,
+            "/translate": 3,
+            "/menu": 1
+        }
+    },
+    "6273987753": {
+        "messages": 4,
+        "commands": {
+            "/start": 1,
+            "/translate": 3
         }
     }
 }

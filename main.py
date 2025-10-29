@@ -10,9 +10,10 @@ import random
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from langdetect import detect, LangDetectException
 from aiogram import F
 from deep_translator import GoogleTranslator
-from langdetect import detect
+import time
 
 info_logger = logging.getLogger("bot_info")
 info_logger.setLevel(logging.INFO)
@@ -52,10 +53,25 @@ def update_stats(user_id: int, command: str):
     with open(STATS_FILE, "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=4)
 
+async def log_api_call(name: str, coro):
+    start_time = time.time()
+    try:
+        result = await coro
+        duration = time.time() - start_time
+        if duration > 1:
+            info_logger.warning(f"Долгий ответ API '{name}': {duration:.2f} сек")
+        else:
+            info_logger.info(f"Успешный запрос '{name}' за {duration:.2f} сек")
+        return result
+    except Exception as e:
+        error_logger.error(f"Ошибка в API '{name}': {e}")
+        raise
+
 users = set()
 first_start_times = {}
 user_names = {}
 user_langs = {}
+user_history = {}
 
 @dp.message(Command(commands=["start"]))
 async def send_hello(message: types.Message):
@@ -260,35 +276,98 @@ async def handle_sticker(message: types.Message):
     print(f"[Стикер] От {message.from_user.first_name}")
     await message.answer("Прикольный стикер! 😎")
 
-@dp.message(Command("translate"))
+@dp.message(Command(commands=["translate"]))
 async def translate_text(message: types.Message):
     update_stats(message.from_user.id, "/translate")
+    start_time = datetime.now()
+    file_path = None
+
     try:
-        parts = message.text.split(maxsplit=2)
-        if len(parts) < 3:
+        text_full = (message.text or "").strip()
+
+        parts = text_full.split(maxsplit=2)
+        if len(parts) == 1:
             await message.answer("❌ Использование: /translate <язык> <текст>\nПример: /translate en Привет, мир!")
             return
 
-        lang = parts[1].lower()
-        text = parts[2]
+        if len(parts) == 2:
+            maybe_text = parts[1].strip()
+            if not maybe_text:
+                await message.answer("❌ Текст пустой.")
+                return
 
-        translated_text = GoogleTranslator(source="auto", target=lang).translate(text)
+            try:
+                src_lang = detect(maybe_text)
+                if src_lang.startswith("ru"):
+                    lang = "en"
+                else:
+                    lang = "ru"
+            except LangDetectException:
+                lang = "en"
+            text = maybe_text
+
+        else:
+            lang = parts[1].lower().strip()
+            text = parts[2].strip()
+
+        if not text:
+            await message.answer("❌ Текст для перевода пустой.")
+            return
+
+        if len(text) > 4000:
+            await message.answer("⚠️ Текст слишком длинный — сократи до 4000 символов.")
+            return
+
+        try:
+            translated_text = GoogleTranslator(source="auto", target=lang).translate(text)
+        except Exception as e:
+            error_logger.error(f"Ошибка вызова GoogleTranslator: {e}")
+            await message.answer("⚠️ Ошибка перевода: проверь код языка (например en, ru) или попробуй позже.")
+            return
+
         await message.answer(f"🌍 Перевод ({lang.upper()}):\n{translated_text}")
 
-        tts = gTTS(translated_text, lang=lang)
-        file_path = "voice.mp3"
-        tts.save(file_path)
+        user_id = message.from_user.id
+        if user_id not in user_history:
+            user_history[user_id] = []
 
-        voice = FSInputFile(file_path)
-        await message.answer_voice(voice)
-
-        os.remove(file_path)
+        user_history[user_id].append({
+            "original": text,
+            "translated": translated_text,
+            "lang": lang,
+            "time": datetime.now().strftime("%H:%M:%S %d.%m.%Y")
+        })
+        if len(user_history[user_id]) > 5:
+            user_history[user_id] = user_history[user_id][-5:]
 
         info_logger.info(f"Перевод: '{text}' -> '{translated_text}' [{lang}]")
 
+        try:
+            if lang and translated_text.strip():
+                file_path = f"voice_{message.from_user.id}_{int(datetime.now().timestamp())}.mp3"
+                tts = gTTS(translated_text, lang=lang)
+                tts.save(file_path)
+                voice = FSInputFile(file_path)
+                await message.answer_voice(voice)
+        except Exception as e:
+            error_logger.error(f"Ошибка при создании озвучки: {e}")
+
     except Exception as e:
-        error_logger.error(f"Ошибка перевода: {e}")
-        await message.answer("⚠️ Ошибка при переводе. Проверь язык и попробуй снова.")
+        error_logger.error(f"Ошибка в /translate: {e}")
+        await message.answer("⚠️ Внутренняя ошибка при обработке запроса. Попробуй ещё раз.")
+
+    finally:
+        try:
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            error_logger.error(f"Не удалось удалить временный файл: {e}")
+
+        elapsed = (datetime.now() - start_time).total_seconds()
+        if elapsed > 1:
+            info_logger.warning(
+                f"⚠️ Медленный ответ: {elapsed:.2f} сек при /translate пользователем {message.from_user.id}"
+            )
 
 @dp.message(Command("stats"))
 async def show_stats(message: types.Message):
@@ -310,6 +389,53 @@ async def show_stats(message: types.Message):
         f"💬 Всего сообщений: {total_messages}",
         parse_mode="HTML"
     )
+
+@dp.message(Command("top"))
+async def show_top(message: types.Message):
+    if not stats:
+        await message.answer("📊 Пока нет данных для рейтинга.")
+        return
+
+    user_activity = []
+    for user_id, data in stats.items():
+        translate_count = data["commands"].get("/translate", 0)
+        user_activity.append((user_id, translate_count))
+
+    top_users = sorted(user_activity, key=lambda x: x[1], reverse=True)[:5]
+
+    if not top_users or all(u[1] == 0 for u in top_users):
+        await message.answer("📉 Пока никто не использовал /translate.")
+        return
+
+    text = "🏆 <b>Топ-5 активных пользователей:</b>\n\n"
+    medals = ["🥇", "🥈", "🥉", "🏅", "🎖️"]
+
+    for i, (user_id, count) in enumerate(top_users):
+        mention = f"<a href='tg://user?id={user_id}'>Пользователь {i+1}</a>"
+        text += f"{medals[i]} {mention} — <b>{count}</b> переводов\n"
+
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(Command("history"))
+async def show_history(message: types.Message):
+    user_id = message.from_user.id
+    history = user_history.get(user_id)
+
+    if not history or len(history) == 0:
+        await message.answer("📂 У тебя пока нет истории переводов.")
+        return
+
+    text_lines = ["📜 <b>Твоя история переводов (последние 5):</b>\n"]
+    for i, item in enumerate(reversed(history), 1):
+        text_lines.append(
+            f"{i}. <b>{item['time']}</b>\n"
+            f"🌍 Язык: <code>{item['lang']}</code>\n"
+            f"📝 Оригинал: <i>{item['original']}</i>\n"
+            f"🔊 Перевод: <b>{item['translated']}</b>\n"
+            "───────────────────────"
+        )
+
+    await message.answer("\n".join(text_lines), parse_mode="HTML")
 
 @dp.message(F.text)
 async def echo_message(message: types.Message):
