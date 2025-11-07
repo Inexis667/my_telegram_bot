@@ -42,3 +42,6 @@ Please select on of the supported languages:
 2025-10-29 18:24:41,900 - ERROR - Ошибка TTS (оригинала): Language not supported: auto
 2025-10-29 18:33:23,547 - ERROR - Ошибка: generate_and_send_tts() missing 3 required positional arguments: 'text', 'lang', and 'label'
 2025-10-29 18:33:25,769 - ERROR - Ошибка: generate_and_send_tts() missing 3 required positional arguments: 'text', 'lang', and 'label'
+2025-11-05 18:36:52,718 -
+2025-11-06 18:59:58,148 - ERROR - Ошибка обработки голосового: [WinError 2] Не удается найти указанный файл
+2025-11-06 19:00:03,339 - ERROR - Ошибка обработки голосового: [WinError 2] Не удается найти указанный файл

@@ -10,10 +10,16 @@ import random
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+import pytesseract
+import speech_recognition as sr
+from pydub import AudioSegment
+from PIL import Image
 from langdetect import detect, LangDetectException
 from aiogram import F
 from deep_translator import GoogleTranslator
 import time
+
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 info_logger = logging.getLogger("bot_info")
 info_logger.setLevel(logging.INFO)
@@ -142,7 +148,6 @@ async def translate_with_choice(callback_query: types.CallbackQuery):
         f"Пример:\n<code>Привет, как дела?</code>",
         parse_mode="HTML"
     )
-    # Сохраняем язык пользователя, чтобы помнить, на какой язык переводить
     user_id = callback_query.from_user.id
     user_langs[user_id] = lang
     await callback_query.answer()
@@ -266,16 +271,6 @@ async def send_mood(message: types.Message):
     moods = ["😊 Отличное!", "😐 Нормальное", "😴 Сонное", "🤩 Замечательное!", "🤔 Задумчивое"]
     await message.answer(f"🎭 Настроение бота: {random.choice(moods)}")
 
-@dp.message(F.photo)
-async def handle_photo(message: types.Message):
-    print(f"[Фото] От {message.from_user.first_name}")
-    await message.answer("Классная картинка! 📸")
-
-@dp.message(F.sticker)
-async def handle_sticker(message: types.Message):
-    print(f"[Стикер] От {message.from_user.first_name}")
-    await message.answer("Прикольный стикер! 😎")
-
 @dp.message(Command(commands=["translate"]))
 async def translate_text(message: types.Message):
     update_stats(message.from_user.id, "/translate")
@@ -368,6 +363,145 @@ async def translate_text(message: types.Message):
             info_logger.warning(
                 f"⚠️ Медленный ответ: {elapsed:.2f} сек при /translate пользователем {message.from_user.id}"
             )
+
+@dp.message(Command("ptrans"))
+async def photo_translate_command(message: types.Message):
+    await message.reply("📸 Отправь фото с текстом, который нужно перевести.")
+
+
+@dp.message(lambda msg: msg.photo)
+async def handle_photo(message: types.Message):
+    photo = message.photo[-1]
+    file = await bot.get_file(photo.file_id)
+    file_path = file.file_path
+    file_name = f"photo_{message.from_user.id}.jpg"
+    await bot.download_file(file_path, file_name)
+
+    anim_msg = await message.reply("🧐 Распознаём текст... ⏳")
+
+    spinners = ["⏳", "⌛", "🔄", "🌀"]
+    for spin in spinners:
+        await asyncio.sleep(0.4)
+        try:
+            await anim_msg.edit_text(f"🧐 Распознаём текст... {spin}")
+        except Exception:
+            pass
+
+    try:
+        # 1️⃣ Открываем изображение
+        image = Image.open(file_name)
+
+        # 2️⃣ Переводим в чёрно-белый режим (повышает точность)
+        gray = image.convert("L")
+
+        # 3️⃣ Повышаем контраст
+        from PIL import ImageEnhance
+        enhancer = ImageEnhance.Contrast(gray)
+        image_enhanced = enhancer.enhance(2)
+
+        # 4️⃣ Распознаём текст (OCR)
+        text = pytesseract.image_to_string(
+            image_enhanced, lang="rus+eng", config="--psm 6"
+        ).strip()
+
+        if not text:
+            await anim_msg.edit_text("😕 Не удалось распознать текст на изображении.")
+            return
+
+        # 5️⃣ Определяем язык текста
+        try:
+            src_lang = detect(text)
+        except Exception:
+            src_lang = "en"
+
+        # 6️⃣ Выбираем язык перевода
+        target_lang = "en" if src_lang == "ru" else "ru"
+
+        # 7️⃣ Переводим текст
+        translated = GoogleTranslator(source=src_lang, target=target_lang).translate(text)
+
+        # 8️⃣ Отправляем результат пользователю
+        await anim_msg.edit_text(
+            f"✅ <b>Распознанный текст:</b>\n<blockquote>{text}</blockquote>\n\n"
+            f"🌍 <b>Перевод ({target_lang.upper()}):</b>\n<blockquote>{translated}</blockquote>",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        await anim_msg.edit_text(f"⚠️ Ошибка при обработке изображения: {e}")
+
+    finally:
+        # 9️⃣ Удаляем временный файл
+        if os.path.exists(file_name):
+            try:
+                os.remove(file_name)
+            except Exception:
+                pass
+
+@dp.message(Command("vtrans"))
+async def start_vtrans(message: types.Message):
+    await message.reply("🎤 Отправь голосовое сообщение на русском, я переведу его на английский.")
+
+@dp.message(lambda msg: msg.voice or msg.audio)
+async def handle_voice(message: types.Message):
+    user_id = message.from_user.id
+    file_path_ogg = f"voice_{user_id}.ogg"
+    file_path_wav = f"voice_{user_id}.wav"
+    tts_path = f"translated_{user_id}.mp3"
+
+    try:
+        voice = message.voice or message.audio
+        file_info = await bot.get_file(voice.file_id)
+        await bot.download_file(file_info.file_path, file_path_ogg)
+
+        sound = AudioSegment.from_file(file_path_ogg)
+        sound.export(file_path_wav, format="wav")
+
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(file_path_wav) as source:
+            audio_data = recognizer.record(source)
+
+        try:
+            text = recognizer.recognize_google(audio_data, language="ru-RU")
+        except sr.UnknownValueError:
+            await message.reply("😕 Не удалось распознать речь. Попробуй сказать чётче.")
+            return
+        except sr.RequestError as e:
+            await message.reply(f"⚠️ Ошибка при обращении к Google Speech API: {e}")
+            return
+
+        if not text.strip():
+            await message.reply("⚠️ Не удалось получить текст из аудио.")
+            return
+
+        try:
+            translated = GoogleTranslator(source="ru", target="en").translate(text)
+        except Exception as e:
+            await message.reply(f"⚠️ Ошибка перевода: {e}")
+            return
+
+        await message.reply(
+            f"🎧 <b>Распознанный текст:</b>\n<blockquote>{text}</blockquote>\n\n"
+            f"🌍 <b>Перевод (EN):</b>\n<blockquote>{translated}</blockquote>",
+            parse_mode="HTML"
+        )
+
+        try:
+            gTTS(translated, lang="en").save(tts_path)
+            await message.reply_voice(FSInputFile(tts_path))
+        except Exception as e:
+            error_logger.error(f"Ошибка при озвучке /vtrans: {e}")
+
+    except Exception as e:
+        error_logger.error(f"Ошибка обработки голосового: {e}")
+        await message.reply(f"⚠️ Произошла ошибка при обработке аудио: {e}")
+    finally:
+        for f in [file_path_ogg, file_path_wav, tts_path]:
+            if f and os.path.exists(f):
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
 
 @dp.message(Command("stats"))
 async def show_stats(message: types.Message):
