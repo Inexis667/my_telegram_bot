@@ -1,9 +1,7 @@
 from aiogram.types import FSInputFile
 import html
 import logging
-import json
 from gtts import gTTS
-import os
 import asyncio
 from datetime import datetime
 import random
@@ -18,6 +16,8 @@ from langdetect import detect, LangDetectException
 from aiogram import F
 from deep_translator import GoogleTranslator
 import time
+import os
+import json
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
@@ -43,21 +43,36 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 STATS_FILE = "stats.json"
-if os.path.exists(STATS_FILE):
-    with open(STATS_FILE, "r", encoding="utf-8") as f:
-        stats = json.load(f)
-else:
-    stats = {}
+stats = {}
 
-def update_stats(user_id: int, command: str):
+def load_stats():
+    global stats
+    if os.path.exists(STATS_FILE):
+        try:
+            with open(STATS_FILE, "r", encoding="utf-8") as f:
+                stats = json.load(f)
+        except:
+            stats = {}
+    else:
+        stats = {}
+
+def save_stats():
+    with open(STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=4)
+
+def update_stats(user_id, command):
     user_id = str(user_id)
+
     if user_id not in stats:
         stats[user_id] = {"messages": 0, "commands": {}}
+
     stats[user_id]["messages"] += 1
     stats[user_id]["commands"][command] = stats[user_id]["commands"].get(command, 0) + 1
 
-    with open(STATS_FILE, "w", encoding="utf-8") as f:
-        json.dump(stats, f, ensure_ascii=False, indent=4)
+    save_stats()
+
+# Загружаем статистику при старте
+load_stats()
 
 async def log_api_call(name: str, coro):
     start_time = time.time()
@@ -197,7 +212,7 @@ async def back_to_menu_callback(callback_query: types.CallbackQuery):
     ])
     await callback_query.message.edit_text("📋 Главное меню:", reply_markup=keyboard)
 
-@dp.message(Command("help"))
+@dp.message(Command(commands=["help"]))
 async def send_help(message: types.Message):
     update_stats(message.from_user.id, "/help")
     help_text = (
@@ -227,7 +242,7 @@ async def send_help(message: types.Message):
 
     await message.answer(help_text, parse_mode="HTML", disable_web_page_preview=True)
 
-@dp.message(Command("about"))
+@dp.message(Command(commands=["about"]))
 async def send_about(message: types.Message):
     update_stats(message.from_user.id, "/about")
     about_text = (
@@ -250,7 +265,7 @@ async def send_about(message: types.Message):
 
     await message.answer(about_text, parse_mode="HTML", disable_web_page_preview=True)
 
-@dp.message(Command("info"))
+@dp.message(Command(commands=["info"]))
 async def send_info(message: types.Message):
         update_stats(message.from_user.id, "/info")
         user_id = message.from_user.id
@@ -265,7 +280,7 @@ async def send_info(message: types.Message):
             parse_mode="HTML"
         )
 
-@dp.message(Command("mood"))
+@dp.message(Command(commands=["mood"]))
 async def send_mood(message: types.Message):
     update_stats(message.from_user.id, "/mood")
     moods = ["😊 Отличное!", "😐 Нормальное", "😴 Сонное", "🤩 Замечательное!", "🤔 Задумчивое"]
@@ -364,17 +379,18 @@ async def translate_text(message: types.Message):
                 f"⚠️ Медленный ответ: {elapsed:.2f} сек при /translate пользователем {message.from_user.id}"
             )
 
-@dp.message(Command("ptrans"))
+@dp.message(Command(commands=["ptrans"]))
 async def photo_translate_command(message: types.Message):
     await message.reply("📸 Отправь фото с текстом, который нужно перевести.")
 
 
 @dp.message(lambda msg: msg.photo)
 async def handle_photo(message: types.Message):
+    user_id = message.from_user.id
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
     file_path = file.file_path
-    file_name = f"photo_{message.from_user.id}.jpg"
+    file_name = f"photo_{user_id}.jpg"
     await bot.download_file(file_path, file_name)
 
     anim_msg = await message.reply("🧐 Распознаём текст... ⏳")
@@ -388,41 +404,47 @@ async def handle_photo(message: types.Message):
             pass
 
     try:
-        # 1️⃣ Открываем изображение
-        image = Image.open(file_name)
+        from PIL import ImageEnhance, ImageFilter
 
-        # 2️⃣ Переводим в чёрно-белый режим (повышает точность)
-        gray = image.convert("L")
+        # 🔹 Обработка изображения
+        image = Image.open(file_name).convert("L")
+        enhancer = ImageEnhance.Contrast(image)
+        image = enhancer.enhance(2.5)
+        image = image.filter(ImageFilter.MedianFilter(size=3))
+        image = image.filter(ImageFilter.SHARPEN)
+        image = image.point(lambda p: 255 if p > 150 else 0)
 
-        # 3️⃣ Повышаем контраст
-        from PIL import ImageEnhance
-        enhancer = ImageEnhance.Contrast(gray)
-        image_enhanced = enhancer.enhance(2)
-
-        # 4️⃣ Распознаём текст (OCR)
         text = pytesseract.image_to_string(
-            image_enhanced, lang="rus+eng", config="--psm 6"
+            image,
+            lang="rus+eng+deu+fra+spa+ita+chi_sim+jpn",
+            config="--oem 3 --psm 6"
         ).strip()
 
         if not text:
             await anim_msg.edit_text("😕 Не удалось распознать текст на изображении.")
             return
 
-        # 5️⃣ Определяем язык текста
+        clean_text = ''.join(ch for ch in text if ch.isalpha() or ch.isspace())
         try:
-            src_lang = detect(text)
+            src_lang = detect(clean_text)
         except Exception:
-            src_lang = "en"
+            src_lang = "auto"
 
-        # 6️⃣ Выбираем язык перевода
-        target_lang = "en" if src_lang == "ru" else "ru"
+        if any("а" <= ch.lower() <= "я" for ch in text):
+            src_lang = "ru"
 
-        # 7️⃣ Переводим текст
+        main_lang = "ru"
+        fallback_lang = "en"
+        target_lang = fallback_lang if src_lang == main_lang else main_lang
+
         translated = GoogleTranslator(source=src_lang, target=target_lang).translate(text)
 
-        # 8️⃣ Отправляем результат пользователю
+        # 🔹 Обновляем статистику после успешного перевода фото
+        update_stats(user_id, "/ptrans_translate")
+
         await anim_msg.edit_text(
-            f"✅ <b>Распознанный текст:</b>\n<blockquote>{text}</blockquote>\n\n"
+            f"✅ <b>Распознанный язык:</b> {src_lang.upper()}\n\n"
+            f"📜 <b>Распознанный текст:</b>\n<blockquote>{text}</blockquote>\n\n"
             f"🌍 <b>Перевод ({target_lang.upper()}):</b>\n<blockquote>{translated}</blockquote>",
             parse_mode="HTML"
         )
@@ -430,16 +452,10 @@ async def handle_photo(message: types.Message):
     except Exception as e:
         await anim_msg.edit_text(f"⚠️ Ошибка при обработке изображения: {e}")
 
-    finally:
-        # 9️⃣ Удаляем временный файл
-        if os.path.exists(file_name):
-            try:
-                os.remove(file_name)
-            except Exception:
-                pass
 
 @dp.message(Command("vtrans"))
 async def start_vtrans(message: types.Message):
+    update_stats(message.from_user.id, "/vtrans")
     await message.reply("🎤 Отправь голосовое сообщение на русском, я переведу его на английский.")
 
 @dp.message(lambda msg: msg.voice or msg.audio)
@@ -505,53 +521,59 @@ async def handle_voice(message: types.Message):
 
 @dp.message(Command("stats"))
 async def show_stats(message: types.Message):
+    update_stats(message.from_user.id, "/stats")
+
     user_id = str(message.from_user.id)
+
     if user_id not in stats:
         await message.answer("📊 У тебя пока нет статистики.")
         return
 
     user_data = stats[user_id]
+
     total_users = len(stats)
     total_messages = sum(u["messages"] for u in stats.values())
 
-    commands = "\n".join([f"{cmd}: {count}" for cmd, count in user_data["commands"].items()])
+    cmds = sorted(user_data["commands"].items(), key=lambda x: x[1], reverse=True)
+    top_commands = "\n".join([f"{cmd}: {count}" for cmd, count in cmds[:5]]) if cmds else "— нет данных —"
+
     await message.answer(
         f"📈 <b>Твоя статистика:</b>\n"
         f"Сообщений: {user_data['messages']}\n"
-        f"Использованные команды:\n{commands}\n\n"
-        f"👥 Всего пользователей: {total_users}\n"
-        f"💬 Всего сообщений: {total_messages}",
+        f"Топ-5 команд:\n{top_commands}\n\n"
+        f"👥 Пользователей: {total_users}\n"
+        f"💬 Сообщений всего: {total_messages}",
         parse_mode="HTML"
     )
 
 @dp.message(Command("top"))
 async def show_top(message: types.Message):
+    update_stats(message.from_user.id, "/top")
+
     if not stats:
-        await message.answer("📊 Пока нет данных для рейтинга.")
+        await message.answer("📊 Нет данных.")
         return
 
-    user_activity = []
+    users = []
     for user_id, data in stats.items():
-        translate_count = data["commands"].get("/translate", 0)
-        user_activity.append((user_id, translate_count))
+        commands_total = sum(data["commands"].values())
+        messages_total = data["messages"]
+        users.append((user_id, commands_total, messages_total))
 
-    top_users = sorted(user_activity, key=lambda x: x[1], reverse=True)[:5]
+    top_users = sorted(users, key=lambda x: (x[1], x[2]), reverse=True)[:5]
 
-    if not top_users or all(u[1] == 0 for u in top_users):
-        await message.answer("📉 Пока никто не использовал /translate.")
-        return
-
-    text = "🏆 <b>Топ-5 активных пользователей:</b>\n\n"
     medals = ["🥇", "🥈", "🥉", "🏅", "🎖️"]
+    text = "🏆 <b>Топ-5 активных пользователей:</b>\n\n"
 
-    for i, (user_id, count) in enumerate(top_users):
-        mention = f"<a href='tg://user?id={user_id}'>Пользователь {i+1}</a>"
-        text += f"{medals[i]} {mention} — <b>{count}</b> переводов\n"
+    for i, (user_id, cmd, msg_count) in enumerate(top_users):
+        text += f"{medals[i]} <a href='tg://user?id={user_id}'>User</a> — {cmd} команд, {msg_count} сообщений\n"
 
     await message.answer(text, parse_mode="HTML")
 
-@dp.message(Command("history"))
+
+@dp.message(Command(commands=["history"]))
 async def show_history(message: types.Message):
+    update_stats(message.from_user.id, "/history")
     user_id = message.from_user.id
     history = user_history.get(user_id)
 
@@ -569,7 +591,15 @@ async def show_history(message: types.Message):
             "───────────────────────"
         )
 
+    text_lines.append("\n❌ Чтобы очистить историю, введи /clear_history")
     await message.answer("\n".join(text_lines), parse_mode="HTML")
+
+@dp.message(Command("clear_history"))
+async def clear_history(message: types.Message):
+    update_stats(message.from_user.id, "/clear_history")
+    user_id = message.from_user.id
+    user_history[user_id] = []
+    await message.answer("🗑️ Ваша история переводов очищена.")
 
 @dp.message(F.text)
 async def echo_message(message: types.Message):
