@@ -1,11 +1,25 @@
+import os
+from dotenv import load_dotenv
+
+print("📁 Текущая папка:", os.getcwd())
+print("📋 Файлы в папке:", [f for f in os.listdir(".") if not f.startswith(".")])
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+print("🔑 BOT_TOKEN:", "ЕСТЬ" if BOT_TOKEN else "НЕТ")
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN не задан. Установите переменную окружения BOT_TOKEN.")
+
 from aiogram.types import FSInputFile
+from stats import update_stats, stats, get_user_stats
 import html
 import logging
 from gtts import gTTS
 import asyncio
 from datetime import datetime
 import random
-
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 import pytesseract
@@ -16,7 +30,6 @@ from langdetect import detect, LangDetectException
 from aiogram import F
 from deep_translator import GoogleTranslator
 import time
-import os
 import json
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -35,43 +48,12 @@ error_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 error_handler.setFormatter(error_formatter)
 error_logger.addHandler(error_handler)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8285221368:AAGeHopGEPs22eZfXbA-U_-Fdn9tqpeuDwM")
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN не задан. Установите переменную окружения BOT_TOKEN.")
-
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-STATS_FILE = "stats.json"
-stats = {}
-
-def load_stats():
-    global stats
-    if os.path.exists(STATS_FILE):
-        try:
-            with open(STATS_FILE, "r", encoding="utf-8") as f:
-                stats = json.load(f)
-        except:
-            stats = {}
-    else:
-        stats = {}
-
-def save_stats():
-    with open(STATS_FILE, "w", encoding="utf-8") as f:
-        json.dump(stats, f, ensure_ascii=False, indent=4)
-
-def update_stats(user_id, command):
-    user_id = str(user_id)
-
-    if user_id not in stats:
-        stats[user_id] = {"messages": 0, "commands": {}}
-
-    stats[user_id]["messages"] += 1
-    stats[user_id]["commands"][command] = stats[user_id]["commands"].get(command, 0) + 1
-
-    save_stats()
-
-load_stats()
+async def on_startup(bot: Bot):
+    me = await bot.get_me()
+    print(f"🚀 Бот запущен: {me.first_name} (@{me.username}) ID: {me.id}")
 
 async def log_api_call(name: str, coro):
     start_time = time.time()
@@ -518,16 +500,15 @@ async def handle_voice(message: types.Message):
                 except Exception:
                     pass
 
-dp.message(Command("stats"))
+
+@dp.message(Command("stats"))
 async def show_stats(message: types.Message):
+    print(f"🔍 /stats вызвана пользователем {message.from_user.id}")
+
     update_stats(message.from_user.id, "/stats")
 
     user_id = str(message.from_user.id)
-
-    if user_id not in stats:
-        stats[user_id] = {"messages": 0, "commands": {}}
-
-    user_data = stats[user_id]
+    user_data = stats.get(user_id, {"messages": 0, "commands": {}})
 
     total_users = len(stats)
     total_messages = sum(u["messages"] for u in stats.values())
@@ -535,22 +516,26 @@ async def show_stats(message: types.Message):
     cmds = sorted(user_data["commands"].items(), key=lambda x: x[1], reverse=True)
     top_commands = "\n".join([f"{cmd}: {count}" for cmd, count in cmds[:5]]) if cmds else "— нет данных —"
 
-    await message.answer(
+    response = (
         f"📈 <b>Твоя статистика:</b>\n"
         f"Сообщений: {user_data['messages']}\n"
         f"Топ-5 команд:\n{top_commands}\n\n"
         f"👥 Пользователей: {total_users}\n"
-        f"💬 Всего сообщений: {total_messages}",
-        parse_mode="HTML"
+        f"💬 Всего сообщений: {total_messages}"
     )
+
+    print(f"📊 Отправляем статистику: {user_data['messages']} сообщений")
+    await message.answer(response, parse_mode="HTML")
+
 
 @dp.message(Command("top"))
 async def show_top(message: types.Message):
-    update_stats(message.from_user.id, "/top")
-
+    print(f"🔍 /top вызвана пользователем {message.from_user.id}")
     if not stats:
         await message.answer("📊 Нет данных.")
         return
+
+    update_stats(message.from_user.id, "/top")
 
     users = []
     for user_id, data in stats.items():
@@ -566,6 +551,7 @@ async def show_top(message: types.Message):
     for i, (user_id, cmd, msg_count) in enumerate(top_users):
         text += f"{medals[i]} <a href='tg://user?id={user_id}'>User</a> — {cmd} команд, {msg_count} сообщений\n"
 
+    print(f"🏆 Отправляем топ: {len(top_users)} пользователей")
     await message.answer(text, parse_mode="HTML")
 
 
@@ -640,4 +626,6 @@ async def main():
         info_logger.info("Бот остановлен.")
 
 if __name__ == "__main__":
+    dp.startup.register(on_startup)
     asyncio.run(main())
+
