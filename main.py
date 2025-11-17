@@ -71,7 +71,6 @@ def update_stats(user_id, command):
 
     save_stats()
 
-# Загружаем статистику при старте
 load_stats()
 
 async def log_api_call(name: str, coro):
@@ -519,15 +518,14 @@ async def handle_voice(message: types.Message):
                 except Exception:
                     pass
 
-@dp.message(Command("stats"))
+dp.message(Command("stats"))
 async def show_stats(message: types.Message):
     update_stats(message.from_user.id, "/stats")
 
     user_id = str(message.from_user.id)
 
     if user_id not in stats:
-        await message.answer("📊 У тебя пока нет статистики.")
-        return
+        stats[user_id] = {"messages": 0, "commands": {}}
 
     user_data = stats[user_id]
 
@@ -542,7 +540,7 @@ async def show_stats(message: types.Message):
         f"Сообщений: {user_data['messages']}\n"
         f"Топ-5 команд:\n{top_commands}\n\n"
         f"👥 Пользователей: {total_users}\n"
-        f"💬 Сообщений всего: {total_messages}",
+        f"💬 Всего сообщений: {total_messages}",
         parse_mode="HTML"
     )
 
@@ -617,13 +615,14 @@ async def echo_message(message: types.Message):
             error_logger.error(f"Ошибка при автопереводе: {e}")
         return
 
-    if text.startswith("/"):
-        await message.answer("❌ Неизвестная команда. Попробуйте /help")
-        return
+@dp.message(F.text.startswith("/"))
+async def unknown_command_handler(message: types.Message):
+    await message.answer("❌ Неизвестная команда. Попробуйте /help")
 
-    if "?" in text:
-        await message.answer("🤔 Хороший вопрос! Но я пока не знаю ответа.")
-        return
+    # Хендлер для обычных сообщений (не команд)
+@dp.message()
+async def non_command_handler(message: types.Message):
+    await message.answer("🤖 Я понимаю только команды. Напишите /help для списка команд.")
 
     await message.answer("Чтобы перевести текст используйте: /translate <язык> <текст>\nНапример: /translate en Привет")
 
