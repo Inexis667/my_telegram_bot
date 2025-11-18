@@ -1,17 +1,12 @@
 import os
 from dotenv import load_dotenv
 
-print("📁 Текущая папка:", os.getcwd())
-print("📋 Файлы в папке:", [f for f in os.listdir(".") if not f.startswith(".")])
-
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-print("🔑 BOT_TOKEN:", "ЕСТЬ" if BOT_TOKEN else "НЕТ")
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан. Установите переменную окружения BOT_TOKEN.")
-
 
 
 from aiogram import Bot, Dispatcher, types
@@ -81,6 +76,69 @@ first_start_times = {}
 user_names = {}
 user_langs = {}
 user_history = {}
+user_translation_data = {}
+
+def get_main_inline_menu():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🌍 Переводчик", callback_data="translate_menu"),
+                InlineKeyboardButton(text="📊 Статистика", callback_data="stats_menu")
+            ],
+            [
+                InlineKeyboardButton(text="🎤 Голос → Текст", callback_data="voice_to_text"),
+                InlineKeyboardButton(text="📸 Текст с фото", callback_data="text_from_photo")
+            ],
+            [
+                InlineKeyboardButton(text="🔊 Текст → Голос", callback_data="text_to_voice"),
+                InlineKeyboardButton(text="📈 Топ пользователей", callback_data="top_users")
+            ],
+            [
+                InlineKeyboardButton(text="ℹ️ О боте", callback_data="about_bot"),
+                InlineKeyboardButton(text="🆘 Помощь", callback_data="help_menu")
+            ],
+            [
+                InlineKeyboardButton(text="👨‍💻 Разработчик", callback_data="developer"),
+                InlineKeyboardButton(text="🌐 GitHub", url="https://github.com/Inexis667")
+            ]
+        ]
+    )
+
+def get_language_menu():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🎯 Популярные пары", callback_data="popular_pairs"),
+                InlineKeyboardButton(text="🔧 Выбрать языки", callback_data="custom_translate")
+            ],
+            [
+                InlineKeyboardButton(text="🇷🇺→🇬🇧 Рус→Англ", callback_data="pair_ru_en"),
+                InlineKeyboardButton(text="🇬🇧→🇷🇺 Англ→Рус", callback_data="pair_en_ru")
+            ],
+            [
+                InlineKeyboardButton(text="🇷🇺→🇩🇪 Рус→Нем", callback_data="pair_ru_de"),
+                InlineKeyboardButton(text="🇩🇪→🇷🇺 Нем→Рус", callback_data="pair_de_ru")
+            ],
+            [
+                InlineKeyboardButton(text="🇷🇺→🇫🇷 Рус→Фран", callback_data="pair_ru_fr"),
+                InlineKeyboardButton(text="🇫🇷→🇷🇺 Фран→Рус", callback_data="pair_fr_ru")
+            ],
+            [
+                InlineKeyboardButton(text="🇷🇺→🇦🇿 Рус→Азер", callback_data="pair_ru_az"),
+                InlineKeyboardButton(text="🇦🇿→🇷🇺 Азер→Рус", callback_data="pair_az_ru")
+            ],
+            [
+                InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
+            ]
+        ]
+    )
+
+def get_back_button():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+        ]
+    )
 
 class TranslationStates(StatesGroup):
     waiting_for_text = State()
@@ -115,88 +173,349 @@ async def send_hello(message: types.Message):
         error_logger.error(f"Ошибка в /start: {e}")
         await message.answer("Произошла ошибка при обработке /start. Попробуйте снова.")
 
-def get_main_reply_menu():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🌍 Переводчик"), KeyboardButton(text="📊 Статистика")],
-            [KeyboardButton(text="🎤 Голос → Текст"), KeyboardButton(text="📸 Текст с фото")],
-            [KeyboardButton(text="🔊 Текст → Голос"), KeyboardButton(text="ℹ️ О боте")],
-            [KeyboardButton(text="🆘 Помощь"), KeyboardButton(text="⚙️ Настройки")]
-        ],
-        resize_keyboard=True,
-        input_field_placeholder="Выберите действие..."
+
+@dp.message(Command("menu"))
+@dp.message(F.text == "⚙️ Настройки")
+async def show_menu(message: types.Message):
+    update_stats(message.from_user.id, "/menu")
+
+    await message.answer(
+        "🎛️ <b>Главное меню</b>\n\n"
+        "Выберите нужную функцию:\n\n"
+        "🌍 <b>Переводчик</b> - перевод между языками\n"
+        "📊 <b>Статистика</b> - ваша активность\n"
+        "🎤 <b>Голос → Текст</b> - расшифровка аудио\n"
+        "📸 <b>Текст с фото</b> - OCR из изображений\n"
+        "🔊 <b>Текст → Голос</b> - синтез речи\n"
+        "📈 <b>Топ пользователей</b> - рейтинг активности\n\n"
+        "💡 <i>Используйте кнопки ниже:</i>",
+        reply_markup=get_main_inline_menu(),
+        parse_mode="HTML"
     )
 
-def get_main_inline_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🌍 Переводчик", callback_data="translate_menu"),
-            InlineKeyboardButton(text="📊 Статистика", callback_data="stats_menu")
-        ],
-        [
-            InlineKeyboardButton(text="🎤 Голос → Текст", callback_data="voice_to_text"),
-            InlineKeyboardButton(text="📸 Текст с фото", callback_data="text_from_photo")
-        ],
-        [
-            InlineKeyboardButton(text="🔊 Текст → Голос", callback_data="text_to_voice"),
-            InlineKeyboardButton(text="📈 Топ пользователей", callback_data="top_users")
-        ],
-        [
-            InlineKeyboardButton(text="ℹ️ О боте", callback_data="about_bot"),
-            InlineKeyboardButton(text="🆘 Помощь", callback_data="help_menu")
-        ],
-        [
-            InlineKeyboardButton(text="👨‍💻 Разработчик", callback_data="developer"),
-            InlineKeyboardButton(text="🌐 GitHub", url="https://github.com/Inexis667")
-        ]
-    ])
 
-def get_language_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🇬🇧 Английский", callback_data="lang_en"),
-            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru")
-        ],
-        [
-            InlineKeyboardButton(text="🇪🇸 Испанский", callback_data="lang_es"),
-            InlineKeyboardButton(text="🇫🇷 Французский", callback_data="lang_fr")
-        ],
-        [
-            InlineKeyboardButton(text="🇩🇪 Немецкий", callback_data="lang_de"),
-            InlineKeyboardButton(text="🇮🇹 Итальянский", callback_data="lang_it")
-        ],
-        [
-            InlineKeyboardButton(text="🇯🇵 Японский", callback_data="lang_ja"),
-            InlineKeyboardButton(text="🇰🇷 Корейский", callback_data="lang_ko")
-        ],
-        [
-            InlineKeyboardButton(text="🇨🇳 Китайский", callback_data="lang_zh"),
-            InlineKeyboardButton(text="🇦🇪 Арабский", callback_data="lang_ar")
-        ],
-        [
-            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
-        ]
-    ])
+@dp.callback_query(F.data == "translate_menu")
+async def translate_menu_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "🌍 <b>Выберите язык перевода:</b>\n\n"
+        "Или отправьте текст в формате:\n"
+        "<code>язык текст</code>\n\n"
+        "Пример: <code>en Привет мир</code>",
+        parse_mode="HTML",
+        reply_markup=get_language_menu()
+    )
+    await callback_query.answer()
 
-def get_settings_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📊 Уведомления", callback_data="settings_notifications"),
-            InlineKeyboardButton(text="🎨 Тема", callback_data="settings_theme")
-        ],
-        [
-            InlineKeyboardButton(text="🌍 Язык интерфейса", callback_data="settings_language"),
-            InlineKeyboardButton(text="⚡ Автоперевод", callback_data="settings_auto")
-        ],
-        [
-            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
-        ]
-    ])
 
-def get_back_button():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
-    ])
+@dp.callback_query(F.data.startswith("lang_"))
+async def translate_with_choice(callback_query: types.CallbackQuery):
+    lang = callback_query.data.split("_")[1]
+    lang_names = {
+        "en": "английский", "ru": "русский", "es": "испанский",
+        "fr": "французский", "de": "немецкий", "it": "итальянский",
+        "ja": "японский", "ko": "корейский", "zh": "китайский", "ar": "арабский"
+    }
+
+    await callback_query.message.edit_text(
+        f"✏️ <b>Отправьте текст для перевода на {lang_names.get(lang, lang)}</b>\n\n"
+        f"Пример:\n<code>Привет, как дела?</code>\n\n"
+        f"💡 <i>Бот переведет ваш текст и покажет результат</i>",
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "stats_menu")
+async def stats_menu_callback(callback_query: types.CallbackQuery):
+    user_id = str(callback_query.from_user.id)
+    user_data = stats.get(user_id, {"messages": 0, "commands": {}})
+
+    total_commands = sum(user_data["commands"].values())
+    top_commands = "\n".join([f"• {cmd}: {count}" for cmd, count in
+                              sorted(user_data["commands"].items(), key=lambda x: x[1], reverse=True)[:3]])
+
+    await callback_query.message.edit_text(
+        f"📊 <b>Ваша статистика:</b>\n\n"
+        f"💬 Сообщений: {user_data['messages']}\n"
+        f"⚡ Команд: {total_commands}\n"
+        f"👥 Всего пользователей: {len(stats)}\n\n"
+        f"🏆 <b>Топ команд:</b>\n{top_commands}\n\n"
+        f"<i>Используйте /stats для подробной статистики</i>",
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "top_users")
+async def top_users_callback(callback_query: types.CallbackQuery):
+    if not stats:
+        await callback_query.message.edit_text(
+            "📊 <b>Пока нет данных для топа</b>\n\n"
+            "<i>Статистика появится после активного использования бота</i>",
+            parse_mode="HTML",
+            reply_markup=get_back_button()
+        )
+        return
+
+    users = []
+    for user_id, data in stats.items():
+        commands_total = sum(data["commands"].values())
+        messages_total = data["messages"]
+        users.append((user_id, commands_total, messages_total))
+
+    top_users = sorted(users, key=lambda x: (x[1], x[2]), reverse=True)[:5]
+
+    medals = ["🥇", "🥈", "🥉", "🎖️", "🎖️"]
+    text = "🏆 <b>Топ-5 активных пользователей:</b>\n\n"
+
+    for i, (user_id, cmd, msg_count) in enumerate(top_users):
+        text += f"{medals[i]} User — {cmd} команд, {msg_count} сообщений\n"
+
+    await callback_query.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "about_bot")
+async def about_bot_callback(callback_query: types.CallbackQuery):
+    total_messages = sum(u["messages"] for u in stats.values())
+    total_commands = sum(sum(u["commands"].values()) for u in stats.values())
+
+    await callback_query.message.edit_text(
+        f"🤖 <b>Translator from Alizhan</b>\n\n"
+        f"📅 <b>Версия:</b> 2.0 Professional\n"
+        f"👨‍💻 <b>Разработчик:</b> Alizhan\n"
+        f"🐍 <b>Технологии:</b> Python, Aiogram, AI\n\n"
+        f"📈 <b>Статистика бота:</b>\n"
+        f"• Пользователей: {len(stats)}\n"
+        f"• Сообщений: {total_messages}\n"
+        f"• Команд: {total_commands}\n\n"
+        f"⭐ <b>Ключевые возможности:</b>\n"
+        f"• Поддержка 100+ языков перевода\n"
+        f"• Высокая точность распознавания\n"
+        f"• Быстрая обработка запросов\n"
+        f"• Удобный интерфейс\n\n"
+        f"💬 <i>По вопросам и предложениям используйте /help</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚙️ Функции", callback_data="bot_functions"),
+                InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
+            ]
+        ])
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "bot_functions")
+async def bot_functions_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "⚙️ <b>Все функции бота:</b>\n\n"
+        "🌍 <b>Переводчик:</b>\n"
+        "• Поддержка 100+ языков\n"
+        "• Быстрый и точный перевод\n"
+        "• Удобный выбор языка\n\n"
+        "📊 <b>Аналитика:</b>\n"
+        "• Личная статистика\n"
+        "• Топ активных пользователей\n"
+        "• Анализ использования\n\n"
+        "🎤 <b>Голосовые функции:</b>\n"
+        "• Голос → Текст (Speech-to-Text)\n"
+        "• Текст → Голос (Text-to-Speech)\n\n"
+        "📸 <b>Работа с изображениями:</b>\n"
+        "• Распознавание текста с фото\n"
+        "• Поддержка разных форматов\n\n"
+        "🎛️ <b>Интерфейс:</b>\n"
+        "• Удобное меню\n"
+        "• Быстрый доступ к функциям\n"
+        "• Простая навигация",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="about_bot")]
+        ])
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "voice_to_text")
+async def voice_to_text_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "🎤 <b>Голос → Текст</b>\n\n"
+        "Отправьте голосовое сообщение или аудиофайл, и я преобразую его в текст.\n\n"
+        "📝 <b>Поддерживаемые форматы:</b>\n"
+        "• Голосовые сообщения Telegram\n"
+        "• Аудиофайлы (MP3, WAV, OGG)\n"
+        "• Видеосообщения\n\n"
+        "💡 <i>Просто отправьте голосовое сообщение - бот автоматически его обработает</i>",
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "text_from_photo")
+async def text_from_photo_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "📸 <b>Текст с фото</b>\n\n"
+        "Отправьте изображение с текстом, и я распознаю его.\n\n"
+        "📝 <b>Поддерживаемые форматы:</b>\n"
+        "• Фотографии (JPG, PNG)\n"
+        "• Сканы документов\n"
+        "• Скриншоты с текстом\n\n"
+        "💡 <i>Просто отправьте изображение - бот автоматически распознает текст</i>",
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "text_to_voice")
+async def text_to_voice_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "🔊 <b>Текст → Голос</b>\n\n"
+        "Отправьте текст, и я преобразую его в голосовое сообщение.\n\n"
+        "📝 <b>Возможности:</b>\n"
+        "• Поддержка разных языков\n"
+        "• Естественное звучание\n"
+        "• Быстрое преобразование\n\n"
+        "💡 <i>Просто отправьте текст - бот ответит голосовым сообщением</i>",
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "help_menu")
+async def help_menu_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "🆘 <b>Справка и поддержка</b>\n\n"
+        "🔹 <b>Основные команды:</b>\n"
+        "/start - Запуск бота\n"
+        "/menu - Главное меню\n"
+        "/help - Эта справка\n\n"
+        "🔹 <b>Функциональные команды:</b>\n"
+        "/translate - Переводчик текста\n"
+        "/stats - Ваша статистика\n"
+        "/top - Топ пользователей\n"
+        "/about - Информация о боте\n\n"
+        "🔹 <b>Быстрый доступ:</b>\n"
+        "• Используйте Reply-кнопки внизу\n"
+        "• Или Inline-меню через /menu\n\n"
+        "❓ <b>Частые вопросы:</b>\n"
+        "• Как перевести текст? - Используйте Переводчик\n"
+        "• Где статистика? - Команда /stats\n"
+        "• Не работает функция? - Перезапустите /start\n\n"
+        "💬 <i>Для связи с разработчиком используйте кнопку ниже</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👨‍💻 Связь с разработчиком", callback_data="developer")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+        ])
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "developer")
+async def developer_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "👨‍💻 <b>Разработчик</b>\n\n"
+        "💼 <b>Имя:</b> Аманшукур Алижан\n"
+        "🎓 <b>Специализация:</b> Python разработка\n"
+        "🤖 <b>Направление:</b> Telegram боты, AI\n\n"
+        "📧 <b>Контакты:</b>\n"
+        "• GitHub: https://github.com/Inexis667\n"
+        "• Telegram: @Inexis667\n\n"
+        "💡 <b>О проекте:</b>\n"
+        "Этот бот создан как демонстрация возможностей\n"
+        "Python и библиотеки Aiogram для создания\n"
+        "многофункциональных Telegram ботов.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🌐 GitHub", url="https://github.com/Inexis667")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+        ])
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "🎛️ <b>Главное меню</b>\n\n"
+        "Выберите нужную функцию:",
+        reply_markup=get_main_inline_menu(),
+        parse_mode="HTML"
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "popular_pairs")
+async def popular_pairs_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "🎯 <b>Популярные языковые пары</b>\n\n"
+        "Выберите направление перевода:",
+        parse_mode="HTML",
+        reply_markup=get_language_menu()
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data == "custom_translate")
+async def custom_translate_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "🔧 <b>Расширенный выбор языков</b>\n\n"
+        "Сначала выберите <b>исходный язык</b>:",
+        parse_mode="HTML",
+        reply_markup=get_source_language_menu()
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data.startswith("src_"))
+async def set_source_language(callback_query: types.CallbackQuery):
+    source_lang = callback_query.data.split("_")[1]
+
+    lang_names = {
+        "auto": "🔍 Автоопределение", "ru": "🇷🇺 Русский", "en": "🇬🇧 Английский",
+        "de": "🇩🇪 Немецкий", "fr": "🇫🇷 Французский", "es": "🇪🇸 Испанский",
+        "az": "🇦🇿 Азербайджанский", "tr": "🇹🇷 Турецкий", "zh": "🇨🇳 Китайский"
+    }
+
+    await callback_query.message.edit_text(
+        f"🌍 <b>Исходный язык:</b> {lang_names.get(source_lang, source_lang)}\n"
+        f"Теперь выберите <b>целевой язык</b>:",
+        parse_mode="HTML",
+        reply_markup=get_target_language_menu(source_lang)
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data.startswith("pair_"))
+async def translate_popular_pair(callback_query: types.CallbackQuery):
+    data = callback_query.data.split("_")
+    source_lang = data[1]
+    target_lang = data[2]
+
+    lang_names = {"ru": "русский", "en": "английский", "de": "немецкий", "fr": "французский", "az": "азербайджанский"}
+
+    await callback_query.message.edit_text(
+        f"✏️ <b>Отправьте текст для перевода</b>\n\n"
+        f"<b>Направление:</b> {lang_names.get(source_lang)} → {lang_names.get(target_lang)}\n\n"
+        f"Пример:\n<code>Привет, как дела?</code>",
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+
+    user_translation_data[callback_query.from_user.id] = {
+        "source": source_lang,
+        "target": target_lang
+    }
+    await callback_query.answer()
 
 @dp.message(Command(commands=["help"]))
 async def send_help(message: types.Message):
