@@ -12,7 +12,18 @@ print("🔑 BOT_TOKEN:", "ЕСТЬ" if BOT_TOKEN else "НЕТ")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан. Установите переменную окружения BOT_TOKEN.")
 
+
+
+from aiogram import Bot, Dispatcher, types
+from aiogram import F
+from aiogram.filters import Command
+
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import StateFilter
+
 from aiogram.types import FSInputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from stats import update_stats, stats, get_user_stats
 import html
 import logging
@@ -20,17 +31,13 @@ from gtts import gTTS
 import asyncio
 from datetime import datetime
 import random
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
 import pytesseract
 import speech_recognition as sr
 from pydub import AudioSegment
 from PIL import Image
 from langdetect import detect, LangDetectException
-from aiogram import F
 from deep_translator import GoogleTranslator
 import time
-import json
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
@@ -53,7 +60,7 @@ dp = Dispatcher()
 
 async def on_startup(bot: Bot):
     me = await bot.get_me()
-    print(f"🚀 Бот запущен: {me.first_name} (@{me.username}) ID: {me.id}")
+    print(f"🤖 {me.first_name} запущен!")
 
 async def log_api_call(name: str, coro):
     start_time = time.time()
@@ -75,6 +82,9 @@ user_names = {}
 user_langs = {}
 user_history = {}
 
+class TranslationStates(StatesGroup):
+    waiting_for_text = State()
+
 @dp.message(Command(commands=["start"]))
 async def send_hello(message: types.Message):
     try:
@@ -88,16 +98,15 @@ async def send_hello(message: types.Message):
             first_start_times[user_id] = datetime.now().strftime("%d.%m.%Y %H:%M")
 
         banner = (
-            "💫 <b>Добро пожаловать в Бота-Переводчика!</b>\n\n"
-            "🌍 Я создан, чтобы помогать тебе мгновенно переводить тексты на десятки языков мира.\n"
-            "🎧 А ещё я умею <b>озвучивать</b> переводы и показывать твою статистику.\n\n"
-            "📘 <b>Что я умею:</b>\n"
-            "• /translate — перевести текст\n"
-            "• /menu — открыть меню кнопок\n"
-            "• /info — показать данные о тебе\n"
-            "• /stats — твоя статистика\n"
-            "• /help — помощь и описание\n\n"
-            "✨ Попробуй: <code>/translate en Привет, мир!</code>"
+            "👋 <b>Добро пожаловать в Translator from Alizhan!</b>\n\n"
+            "🚀 <i>Многофункциональный бот для работы с текстом и не только</i>\n\n"
+            "✨ <b>Основные возможности:</b>\n"
+            "• 🌍 Перевод между 100+ языками\n"
+            "• 📊 Статистика и аналитика\n"
+            "• 🎤 Конвертация голоса в текст\n"
+            "• 📸 Распознавание текста с фото\n"
+            "• 🔊 Текст в голосовые сообщения\n\n"
+            "📝 <b>Используйте /menu для доступа ко всем функциям</b>"
         )
 
         await message.answer(banner, parse_mode="HTML")
@@ -106,119 +115,111 @@ async def send_hello(message: types.Message):
         error_logger.error(f"Ошибка в /start: {e}")
         await message.answer("Произошла ошибка при обработке /start. Попробуйте снова.")
 
-@dp.message(Command("menu"))
-async def show_menu(message: types.Message):
-    update_stats(message.from_user.id, "/menu")
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+def get_main_reply_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🌍 Переводчик"), KeyboardButton(text="📊 Статистика")],
+            [KeyboardButton(text="🎤 Голос → Текст"), KeyboardButton(text="📸 Текст с фото")],
+            [KeyboardButton(text="🔊 Текст → Голос"), KeyboardButton(text="ℹ️ О боте")],
+            [KeyboardButton(text="🆘 Помощь"), KeyboardButton(text="⚙️ Настройки")]
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выберите действие..."
+    )
+
+def get_main_inline_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
         [
-            types.InlineKeyboardButton(text="🔄 Перевести текст", callback_data="translate_menu"),
-            types.InlineKeyboardButton(text="🔹 О боте", callback_data="about_bot"),
-            types.InlineKeyboardButton(text="👨‍💻 Разработчик", callback_data="developer"),
+            InlineKeyboardButton(text="🌍 Переводчик", callback_data="translate_menu"),
+            InlineKeyboardButton(text="📊 Статистика", callback_data="stats_menu")
         ],
         [
-            types.InlineKeyboardButton(text="🌐 GitHub", url="https://github.com/Inexis667")
-        ]
-    ])
-    await message.answer("📋 Главное меню:", reply_markup=keyboard)
-
-@dp.callback_query(F.data == "translate_menu")
-async def translate_menu_callback(callback_query: types.CallbackQuery):
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="🇬🇧 Английский", callback_data="lang_en")],
-        [types.InlineKeyboardButton(text="🇩🇪 Немецкий", callback_data="lang_de")],
-        [types.InlineKeyboardButton(text="🇫🇷 Французский", callback_data="lang_fr")],
-        [types.InlineKeyboardButton(text="🇪🇸 Испанский", callback_data="lang_es")],
-        [types.InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru")],
-    ])
-    await callback_query.message.answer(
-        "🌍 Выберите язык, на который хотите перевести текст:",
-        reply_markup=keyboard
-    )
-    await callback_query.answer()
-
-@dp.callback_query(F.data.startswith("lang_"))
-async def translate_with_choice(callback_query: types.CallbackQuery):
-    lang = callback_query.data.split("_")[1]
-    await callback_query.message.answer(
-        f"✏️ Теперь отправь текст для перевода на <b>{lang.upper()}</b>.\n\n"
-        f"Пример:\n<code>Привет, как дела?</code>",
-        parse_mode="HTML"
-    )
-    user_id = callback_query.from_user.id
-    user_langs[user_id] = lang
-    await callback_query.answer()
-
-@dp.callback_query(F.data == "about_bot")
-async def about_bot_callback(callback_query: types.CallbackQuery):
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [
-            types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu"),
-            types.InlineKeyboardButton(text="⚙️ Функции", callback_data="bot_functions"),
-        ]
-    ])
-    await callback_query.message.edit_text(
-        "🤖 Я — Бот-Переводчик на Python (Aiogram)!\n"
-        "Моя цель — помогать людям переводить текст с разных языков мира.",
-        reply_markup=keyboard
-    )
-
-@dp.callback_query(F.data == "bot_functions")
-async def bot_functions_callback(callback_query: types.CallbackQuery):
-    text = (
-        "⚙️ <b>Функции бота:</b>\n"
-        "— Отвечает на команды /start, /help, /about, /info, /mood\n"
-        "— Перевод текста по команде\n"
-        "— Распознаёт фото и стикеры\n"
-        "— Главное меню и информация 📋"
-    )
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="🔙 Назад", callback_data="about_bot")]
-    ])
-    await callback_query.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
-
-@dp.callback_query(F.data == "developer")
-async def developer_callback(callback_query: types.CallbackQuery):
-    await callback_query.answer("Разработчик: Аманшукур Алижан 👨‍💻", show_alert=True)
-
-@dp.callback_query(F.data == "back_to_menu")
-async def back_to_menu_callback(callback_query: types.CallbackQuery):
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [
-            types.InlineKeyboardButton(text="🔹 О боте", callback_data="about_bot"),
-            types.InlineKeyboardButton(text="👨‍💻 Разработчик", callback_data="developer"),
+            InlineKeyboardButton(text="🎤 Голос → Текст", callback_data="voice_to_text"),
+            InlineKeyboardButton(text="📸 Текст с фото", callback_data="text_from_photo")
         ],
         [
-            types.InlineKeyboardButton(text="🌐 GitHub", url="https://github.com/Inexis667")
+            InlineKeyboardButton(text="🔊 Текст → Голос", callback_data="text_to_voice"),
+            InlineKeyboardButton(text="📈 Топ пользователей", callback_data="top_users")
+        ],
+        [
+            InlineKeyboardButton(text="ℹ️ О боте", callback_data="about_bot"),
+            InlineKeyboardButton(text="🆘 Помощь", callback_data="help_menu")
+        ],
+        [
+            InlineKeyboardButton(text="👨‍💻 Разработчик", callback_data="developer"),
+            InlineKeyboardButton(text="🌐 GitHub", url="https://github.com/Inexis667")
         ]
     ])
-    await callback_query.message.edit_text("📋 Главное меню:", reply_markup=keyboard)
+
+def get_language_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇬🇧 Английский", callback_data="lang_en"),
+            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru")
+        ],
+        [
+            InlineKeyboardButton(text="🇪🇸 Испанский", callback_data="lang_es"),
+            InlineKeyboardButton(text="🇫🇷 Французский", callback_data="lang_fr")
+        ],
+        [
+            InlineKeyboardButton(text="🇩🇪 Немецкий", callback_data="lang_de"),
+            InlineKeyboardButton(text="🇮🇹 Итальянский", callback_data="lang_it")
+        ],
+        [
+            InlineKeyboardButton(text="🇯🇵 Японский", callback_data="lang_ja"),
+            InlineKeyboardButton(text="🇰🇷 Корейский", callback_data="lang_ko")
+        ],
+        [
+            InlineKeyboardButton(text="🇨🇳 Китайский", callback_data="lang_zh"),
+            InlineKeyboardButton(text="🇦🇪 Арабский", callback_data="lang_ar")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
+        ]
+    ])
+
+def get_settings_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📊 Уведомления", callback_data="settings_notifications"),
+            InlineKeyboardButton(text="🎨 Тема", callback_data="settings_theme")
+        ],
+        [
+            InlineKeyboardButton(text="🌍 Язык интерфейса", callback_data="settings_language"),
+            InlineKeyboardButton(text="⚡ Автоперевод", callback_data="settings_auto")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
+        ]
+    ])
+
+def get_back_button():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+    ])
 
 @dp.message(Command(commands=["help"]))
 async def send_help(message: types.Message):
     update_stats(message.from_user.id, "/help")
     help_text = (
-        "🆘 <b>Помощь по командам:</b>\n"
-        "───────────────────────\n"
-        "💬 /start — начать работу с ботом\n"
-        "📋 /menu — открыть главное меню\n"
-        "🈹 /translate &lt;язык&gt; &lt;текст&gt; — перевести текст\n"
-        "📊 /stats — статистика использования\n"
-        "👤 /info — информация о тебе\n"
-        "💡 /about — о проекте\n"
-        "🎭 /mood — настроение бота\n\n"
-        "🌐 <b>Поддерживаемые языки:</b>\n"
-        "<code>en</code> — Английский\n"
-        "<code>ru</code> — Русский\n"
-        "<code>de</code> — Немецкий\n"
-        "<code>fr</code> — Французский\n"
-        "<code>es</code> — Испанский\n"
-        "<code>it</code> — Итальянский\n"
-        "<code>zh</code> — Китайский\n\n"
-        "💭 Просто напиши текст с вопросом — я отвечу!\n"
-        "❓ Пример: <code>Как тебя зовут?</code>\n"
-        "───────────────────────\n"
-        "👨‍💻 Разработчик: <b>Аманшукур Алижан</b>\n"
-        "📦 GitHub: <a href='https://github.com/Inexis667'>Inexis667</a>"
+        "🆘 <b>Справка по командам</b>\n\n"
+        "🔹 <b>Основные команды:</b>\n"
+        "/start - Запуск бота\n"
+        "/menu - Главное меню\n"
+        "/help - Эта справка\n\n"
+        "🔹 <b>Функциональные команды:</b>\n"
+        "/translate - Переводчик текста\n"
+        "/stats - Ваша статистика\n"
+        "/top - Топ пользователей\n"
+        "/about - Информация о боте\n\n"
+        "🔹 <b>Быстрый доступ через кнопки:</b>\n"
+        "• Используйте меню внизу экрана\n"
+        "• Все функции в одном месте\n\n"
+        "📝 <b>Примеры использования:</b>\n"
+        "<code>/translate en Привет мир</code>\n"
+        "<code>Отправьте голосовое сообщение</code>\n"
+        "<code>Отправьте фото с текстом</code>\n\n"
+        "❓ <i>Если что-то не работает - перезапустите бота /start</i>"
     )
 
     await message.answer(help_text, parse_mode="HTML", disable_web_page_preview=True)
@@ -227,21 +228,25 @@ async def send_help(message: types.Message):
 async def send_about(message: types.Message):
     update_stats(message.from_user.id, "/about")
     about_text = (
-        "🤖 <b>О проекте</b>\n"
-        "───────────────────────\n"
-        "📘 Название: <b>Бот-Переводчик</b>\n"
-        "🧩 Основан на: <code>Python + Aiogram + Deep Translator + gTTS</code>\n"
-        "🎯 Назначение: мгновенный перевод текста и озвучка результата.\n\n"
-        "⚙️ <b>Возможности:</b>\n"
-        "• Перевод текста между десятками языков\n"
-        "• Озвучивание перевода голосом\n"
-        "• Меню с кнопками и выбор языка\n"
-        "• Подсчёт статистики и активности\n"
-        "• Реакции на фото, стикеры и вопросы\n\n"
-        "👨‍💻 <b>Автор:</b> Аманшукур Алижан\n"
-        "🔗 GitHub: <a href='https://github.com/Inexis667'>Inexis667</a>\n"
-        "───────────────────────\n"
-        "💬 <i>“Бот создан, чтобы сделать изучение языков проще и интереснее.”</i>"
+        "🤖 <b>Translator from Alizhan</b>\n\n"
+        "📅 <b>Версия:</b> 2.0\n"
+        "👨‍💻 <b>Разработчик:</b> Alizhan\n"
+        "🐍 <b>Технологии:</b> Python, Aiogram, AI\n\n"
+        "⭐ <b>Ключевые возможности:</b>\n"
+        "• Поддержка 100+ языков перевода\n"
+        "• Высокая точность распознавания\n"
+        "• Быстрая обработка запросов\n"
+        "• Статистика использования\n"
+        "• Удобный интерфейс\n\n"
+        "🛠️ <b>Используемые API:</b>\n"
+        "• Google Translate API\n"
+        "• SpeechRecognition\n"
+        "• Tesseract OCR\n"
+        "• gTTS (Text-to-Speech)\n\n"
+        "📈 <b>Статистика бота:</b>\n"
+        f"• Пользователей: {len(stats)}\n"
+        f"• Сообщений: {sum(u['messages'] for u in stats.values())}\n\n"
+        "💬 <i>По вопросам и предложениям: /help</i>"
     )
 
     await message.answer(about_text, parse_mode="HTML", disable_web_page_preview=True)
@@ -503,7 +508,6 @@ async def handle_voice(message: types.Message):
 
 @dp.message(Command("stats"))
 async def show_stats(message: types.Message):
-    print(f"🔍 /stats вызвана пользователем {message.from_user.id}")
 
     update_stats(message.from_user.id, "/stats")
 
@@ -524,13 +528,11 @@ async def show_stats(message: types.Message):
         f"💬 Всего сообщений: {total_messages}"
     )
 
-    print(f"📊 Отправляем статистику: {user_data['messages']} сообщений")
     await message.answer(response, parse_mode="HTML")
 
 
 @dp.message(Command("top"))
 async def show_top(message: types.Message):
-    print(f"🔍 /top вызвана пользователем {message.from_user.id}")
     if not stats:
         await message.answer("📊 Нет данных.")
         return
@@ -551,7 +553,6 @@ async def show_top(message: types.Message):
     for i, (user_id, cmd, msg_count) in enumerate(top_users):
         text += f"{medals[i]} <a href='tg://user?id={user_id}'>User</a> — {cmd} команд, {msg_count} сообщений\n"
 
-    print(f"🏆 Отправляем топ: {len(top_users)} пользователей")
     await message.answer(text, parse_mode="HTML")
 
 

@@ -31,7 +31,6 @@ def save_stats():
 def update_stats(user_id, command):
     user_id = str(user_id)
 
-    print(f"📊 Обновление: user={user_id}, command={command}")
 
     if user_id not in stats:
         stats[user_id] = {"messages": 0, "commands": {}}
@@ -39,7 +38,6 @@ def update_stats(user_id, command):
     stats[user_id]["messages"] += 1
     stats[user_id]["commands"][command] = stats[user_id]["commands"].get(command, 0) + 1
 
-    print(f"📈 Результат: {stats[user_id]}")
     save_stats()
 
 
