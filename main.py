@@ -57,6 +57,11 @@ async def on_startup(bot: Bot):
     me = await bot.get_me()
     print(f"🤖 {me.first_name} запущен!")
 
+user_translation_data = {}
+
+class TranslationStates(StatesGroup):
+    waiting_for_text = State()
+
 async def log_api_call(name: str, coro):
     start_time = time.time()
     try:
@@ -76,7 +81,6 @@ first_start_times = {}
 user_names = {}
 user_langs = {}
 user_history = {}
-user_translation_data = {}
 
 def get_main_inline_menu():
     return InlineKeyboardMarkup(
@@ -133,15 +137,57 @@ def get_language_menu():
         ]
     )
 
+def get_source_language_menu():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🇷🇺 Русский", callback_data="src_ru"),
+                InlineKeyboardButton(text="🇬🇧 Английский", callback_data="src_en")
+            ],
+            [
+                InlineKeyboardButton(text="🇩🇪 Немецкий", callback_data="src_de"),
+                InlineKeyboardButton(text="🇫🇷 Французский", callback_data="src_fr")
+            ],
+            [
+                InlineKeyboardButton(text="🇦🇿 Азербайджанский", callback_data="src_az"),
+                InlineKeyboardButton(text="🇹🇷 Турецкий", callback_data="src_tr")
+            ],
+            [
+                InlineKeyboardButton(text="🔍 Автоопределение", callback_data="src_auto")
+            ],
+            [
+                InlineKeyboardButton(text="🔙 Назад", callback_data="translate_menu")
+            ]
+        ]
+    )
+
+def get_target_language_menu(source_lang):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🇷🇺 Русский", callback_data=f"target_{source_lang}_ru"),
+                InlineKeyboardButton(text="🇬🇧 Английский", callback_data=f"target_{source_lang}_en")
+            ],
+            [
+                InlineKeyboardButton(text="🇩🇪 Немецкий", callback_data=f"target_{source_lang}_de"),
+                InlineKeyboardButton(text="🇫🇷 Французский", callback_data=f"target_{source_lang}_fr")
+            ],
+            [
+                InlineKeyboardButton(text="🇦🇿 Азербайджанский", callback_data=f"target_{source_lang}_az"),
+                InlineKeyboardButton(text="🇹🇷 Турецкий", callback_data=f"target_{source_lang}_tr")
+            ],
+            [
+                InlineKeyboardButton(text="🔙 Назад", callback_data="custom_translate")
+            ]
+        ]
+    )
+
 def get_back_button():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
         ]
     )
-
-class TranslationStates(StatesGroup):
-    waiting_for_text = State()
 
 @dp.message(Command(commands=["start"]))
 async def send_hello(message: types.Message):
@@ -495,8 +541,38 @@ async def set_source_language(callback_query: types.CallbackQuery):
     await callback_query.answer()
 
 
+@dp.callback_query(F.data.startswith("target_"))
+async def set_target_language(callback_query: types.CallbackQuery, state: FSMContext):  # ← ДОБАВЬТЕ state: FSMContext
+    data = callback_query.data.split("_")
+    source_lang = data[1]
+    target_lang = data[2]
+
+    lang_names = {
+        "ru": "русский", "en": "английский", "de": "немецкий",
+        "fr": "французский", "az": "азербайджанский", "tr": "турецкий"
+    }
+
+    await callback_query.message.edit_text(
+        f"✏️ <b>Отправьте текст для перевода</b>\n\n"
+        f"<b>Направление:</b> {lang_names.get(source_lang)} → {lang_names.get(target_lang)}\n\n"
+        f"Пример:\n<code>Привет, как дела?</code>",
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+
+    # Сохраняем в FSM состоянии
+    await state.update_data(
+        source_lang=source_lang,
+        target_lang=target_lang
+    )
+    await state.set_state(TranslationStates.waiting_for_text)
+
+    await callback_query.answer()
+
+
 @dp.callback_query(F.data.startswith("pair_"))
-async def translate_popular_pair(callback_query: types.CallbackQuery):
+async def translate_popular_pair(callback_query: types.CallbackQuery,
+                                 state: FSMContext):  # ← ДОБАВЬТЕ state: FSMContext
     data = callback_query.data.split("_")
     source_lang = data[1]
     target_lang = data[2]
@@ -511,10 +587,13 @@ async def translate_popular_pair(callback_query: types.CallbackQuery):
         reply_markup=get_back_button()
     )
 
-    user_translation_data[callback_query.from_user.id] = {
-        "source": source_lang,
-        "target": target_lang
-    }
+    # Сохраняем в FSM состоянии
+    await state.update_data(
+        source_lang=source_lang,
+        target_lang=target_lang
+    )
+    await state.set_state(TranslationStates.waiting_for_text)
+
     await callback_query.answer()
 
 @dp.message(Command(commands=["help"]))
@@ -711,7 +790,6 @@ async def handle_photo(message: types.Message):
     try:
         from PIL import ImageEnhance, ImageFilter
 
-        # 🔹 Обработка изображения
         image = Image.open(file_name).convert("L")
         enhancer = ImageEnhance.Contrast(image)
         image = enhancer.enhance(2.5)
@@ -744,7 +822,6 @@ async def handle_photo(message: types.Message):
 
         translated = GoogleTranslator(source=src_lang, target=target_lang).translate(text)
 
-        # 🔹 Обновляем статистику после успешного перевода фото
         update_stats(user_id, "/ptrans_translate")
 
         await anim_msg.edit_text(
@@ -925,7 +1002,6 @@ async def echo_message(message: types.Message):
 async def unknown_command_handler(message: types.Message):
     await message.answer("❌ Неизвестная команда. Попробуйте /help")
 
-    # Хендлер для обычных сообщений (не команд)
 @dp.message()
 async def non_command_handler(message: types.Message):
     await message.answer("🤖 Я понимаю только команды. Напишите /help для списка команд.")
@@ -944,6 +1020,90 @@ async def main():
         error_logger.error(f"Критическая ошибка при запуске: {e}")
     finally:
         info_logger.info("Бот остановлен.")
+
+
+@dp.message(F.text & ~F.command())
+async def handle_all_text_messages(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    current_state = await state.get_state()
+
+    print(f"🔍 Получен текст: '{message.text}'")
+    print(f"📊 Текущее состояние FSM: {current_state}")
+
+    # Проверяем, находится ли пользователь в состоянии ожидания перевода
+    if current_state == TranslationStates.waiting_for_text:
+        print("🎯 Состояние: waiting_for_text - обрабатываем перевод")
+
+        user_data = await state.get_data()
+        source_lang = user_data.get('source_lang')
+        target_lang = user_data.get('target_lang')
+
+        print(f"🌍 Языки перевода: {source_lang} → {target_lang}")
+
+        try:
+            # Если выбран автоопределение
+            if source_lang == "auto":
+                try:
+                    detected_lang = detect(message.text)
+                    source_lang = detected_lang
+                    print(f"🔍 Автоопределен язык: {detected_lang}")
+                except Exception as e:
+                    print(f"❌ Ошибка автоопределения: {e}")
+                    source_lang = 'auto'
+
+            # Выполняем перевод
+            print("🔄 Начинаю перевод...")
+            translated = GoogleTranslator(
+                source=source_lang if source_lang != "auto" else 'auto',
+                target=target_lang
+            ).translate(message.text)
+
+            print(f"✅ Перевод выполнен: {translated}")
+
+            lang_names = {
+                "ru": "русский", "en": "английский", "de": "немецкий",
+                "fr": "французский", "az": "азербайджанский", "es": "испанский",
+                "tr": "турецкий", "zh": "китайский", "auto": "автоопределение"
+            }
+
+            source_display = lang_names.get(source_lang, source_lang)
+            if source_lang == "auto":
+                source_display = "автоопределение"
+
+            await message.answer(
+                f"🌍 <b>Результат перевода:</b>\n\n"
+                f"📥 <b>Исходный текст ({source_display}):</b>\n<code>{message.text}</code>\n\n"
+                f"📤 <b>Перевод ({lang_names.get(target_lang, target_lang)}):</b>\n<code>{translated}</code>\n\n"
+                f"💡 <i>Для нового перевода используйте меню</i>",
+                parse_mode="HTML",
+                reply_markup=get_main_inline_menu()
+            )
+
+            update_stats(message.from_user.id, "translate")
+
+        except Exception as e:
+            print(f"❌ Ошибка перевода: {e}")
+            await message.answer(
+                f"❌ <b>Ошибка перевода</b>\n\n"
+                f"Попробуйте еще раз или выберите другой язык.",
+                parse_mode="HTML",
+                reply_markup=get_main_inline_menu()
+            )
+
+        # Очищаем состояние
+        await state.clear()
+        print("🗑️ Состояние очищено")
+
+    else:
+        print("❌ Не в состоянии перевода - отправляем подсказку")
+        # Если это не перевод, обрабатываем как обычное сообщение
+        await message.answer(
+            "🤖 <b>Я понимаю команды и переводы</b>\n\n"
+            "Для перевода используйте меню: /menu\n"
+            "Для справки: /help",
+            parse_mode="HTML",
+            reply_markup=get_main_inline_menu()
+        )
 
 if __name__ == "__main__":
     dp.startup.register(on_startup)
