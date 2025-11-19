@@ -13,8 +13,8 @@ from aiogram import Bot, Dispatcher, types
 from aiogram import F
 from aiogram.filters import Command
 
-from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 
 from aiogram.types import FSInputFile
@@ -32,6 +32,7 @@ from pydub import AudioSegment
 from PIL import Image
 from langdetect import detect, LangDetectException
 from deep_translator import GoogleTranslator
+from aiogram.types import InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 import time
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -56,6 +57,7 @@ dp = Dispatcher()
 async def on_startup(bot: Bot):
     me = await bot.get_me()
     print(f"🤖 {me.first_name} запущен!")
+    print(f"🔗 Инлайн-режим: @{me.username} текст")
 
 user_translation_data = {}
 
@@ -80,7 +82,7 @@ users = set()
 first_start_times = {}
 user_names = {}
 user_langs = {}
-user_history = {}
+user_translation_history = {}
 
 def get_main_inline_menu():
     return InlineKeyboardMarkup(
@@ -130,6 +132,9 @@ def get_language_menu():
             [
                 InlineKeyboardButton(text="🇷🇺→🇦🇿 Рус→Азер", callback_data="pair_ru_az"),
                 InlineKeyboardButton(text="🇦🇿→🇷🇺 Азер→Рус", callback_data="pair_az_ru")
+            ],
+            [
+                InlineKeyboardButton(text="📜 История переводов", callback_data="translation_history")
             ],
             [
                 InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")
@@ -182,12 +187,192 @@ def get_target_language_menu(source_lang):
         ]
     )
 
+def get_history_menu():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📜 Посмотреть историю", callback_data="view_history")],
+            [InlineKeyboardButton(text="🗑️ Очистить историю", callback_data="clear_history")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="translate_menu")]
+        ]
+    )
+
 def get_back_button():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
         ]
     )
+
+
+@dp.callback_query(F.data == "view_history")
+async def view_history_callback(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+
+    if user_id not in user_translation_history or not user_translation_history[user_id]:
+        await callback_query.message.edit_text(
+            "📜 <b>История переводов пуста</b>\n\n"
+            "Здесь будут сохраняться ваши последние переводы.",
+            parse_mode="HTML",
+            reply_markup=get_back_button()
+        )
+        return
+
+    history_text = "📜 <b>Ваша история переводов:</b>\n\n"
+
+    for i, record in enumerate(reversed(user_translation_history[user_id][-5:]), 1):
+        history_text += f"<b>{i}.</b> [{record['direction']}] {record['timestamp']}\n"
+        history_text += f"<code>{record['original'][:30]}...</code> → <code>{record['translated'][:30]}...</code>\n\n"
+
+    await callback_query.message.edit_text(
+        history_text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🗑️ Очистить историю", callback_data="clear_history")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="translate_menu")]
+        ])
+    )
+    await callback_query.answer()
+
+@dp.callback_query(F.data == "translation_history")
+async def translation_history_callback(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "📜 <b>История переводов</b>\n\n"
+        "Здесь вы можете посмотреть или очистить историю ваших переводов.",
+        parse_mode="HTML",
+        reply_markup=get_history_menu()
+    )
+    await callback_query.answer()
+
+
+
+@dp.callback_query(F.data == "clear_history")
+async def clear_history_callback(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+
+    if user_id in user_translation_history:
+        user_translation_history[user_id] = []
+
+    await callback_query.message.edit_text(
+        "🗑️ <b>История переводов очищена</b>",
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+    await callback_query.answer()
+
+
+@dp.inline_query()
+async def inline_translator(inline_query: InlineQuery):
+    print(f"🔍 ИНЛАЙН ЗАПРОС: '{inline_query.query}' от {inline_query.from_user.id}")
+    query = inline_query.query.strip()
+
+    # Если запрос пустой - показываем подсказку
+    if not query:
+        results = [
+            InlineQueryResultArticle(
+                id="help",
+                title="🌍 Переводчик",
+                description="Напишите текст для перевода",
+                input_message_content=InputTextMessageContent(
+                    message_text="🤖 <b>Translator from Alizhan</b>\n\n"
+                                 "Используйте: язык текст\n"
+                                 "Пример: en Привет мир\n\n"
+                                 "Или просто текст для перевода на разные языки",
+                    parse_mode="HTML"
+                )
+            )
+        ]
+        await inline_query.answer(results, cache_time=1)
+        return
+
+    # Парсим запрос: "язык текст" или просто текст
+    parts = query.split(' ', 1)
+    if len(parts) == 2 and len(parts[0]) == 2:  # формат "en текст"
+        target_lang = parts[0].lower()
+        text_to_translate = parts[1]
+
+        # Перевод на один конкретный язык
+        try:
+            detected_lang = detect(text_to_translate)
+            translated = GoogleTranslator(source=detected_lang, target=target_lang).translate(text_to_translate)
+
+            lang_names = {
+                "ru": "🇷🇺 Русский", "en": "🇬🇧 Английский", "de": "🇩🇪 Немецкий",
+                "fr": "🇫🇷 Французский", "es": "🇪🇸 Испанский", "it": "🇮🇹 Итальянский",
+                "zh": "🇨🇳 Китайский", "ja": "🇯🇵 Японский", "ko": "🇰🇷 Корейский"
+            }
+
+            results = [
+                InlineQueryResultArticle(
+                    id="1",
+                    title=f"🌍 Перевод на {lang_names.get(target_lang, target_lang.upper())}",
+                    description=f"{text_to_translate} → {translated}",
+                    input_message_content=InputTextMessageContent(
+                        message_text=f"🌍 <b>Перевод</b>\n\n"
+                                     f"📥 <b>Исходный текст:</b>\n{text_to_translate}\n\n"
+                                     f"📤 <b>Перевод ({lang_names.get(target_lang, target_lang.upper())}):</b>\n{translated}\n\n"
+                                     f"<i>via Translator from Alizhan</i>",
+                        parse_mode="HTML"
+                    )
+                )
+            ]
+
+        except Exception as e:
+            results = [InlineQueryResultArticle(id="error", title="❌ Ошибка", description="Ошибка перевода",
+                                                input_message_content=InputTextMessageContent(
+                                                    message_text="❌ Ошибка перевода"))]
+
+    else:
+        # Просто текст - показываем готовые переводы на разные языки
+        text_to_translate = query
+
+        try:
+            detected_lang = detect(text_to_translate)
+            print(f"✅ Язык определен: {detected_lang}")
+
+            # Популярные языки для перевода
+            target_languages = ["en", "de", "fr", "es", "it", "ru"]
+
+            results = []
+            for lang in target_languages:
+                if lang != detected_lang:  # не переводим на тот же язык
+                    try:
+                        translated = GoogleTranslator(source=detected_lang, target=lang).translate(text_to_translate)
+
+                        lang_names = {
+                            "ru": "🇷🇺 Русский", "en": "🇬🇧 Английский", "de": "🇩🇪 Немецкий",
+                            "fr": "🇫🇷 Французский", "es": "🇪🇸 Испанский", "it": "🇮🇹 Итальянский"
+                        }
+
+                        results.append(InlineQueryResultArticle(
+                            id=lang,
+                            title=f"🌍 {lang_names.get(lang, lang.upper())}",
+                            description=f"{text_to_translate} → {translated}",
+                            input_message_content=InputTextMessageContent(
+                                message_text=f"🌍 <b>Перевод на {lang_names.get(lang, lang.upper())}</b>\n\n"
+                                             f"📥 <b>Исходный текст:</b>\n{text_to_translate}\n\n"
+                                             f"📤 <b>Перевод:</b>\n{translated}\n\n"
+                                             f"<i>via Translator from Alizhan</i>",
+                                parse_mode="HTML"
+                            )
+                        ))
+                    except Exception as e:
+                        continue
+
+            # Если нет результатов
+            if not results:
+                results = [InlineQueryResultArticle(id="error", title="❌ Ошибка", description="Не удалось перевести",
+                                                    input_message_content=InputTextMessageContent(
+                                                        message_text="❌ Ошибка перевода"))]
+
+        except Exception as e:
+            print(f"❌ ОШИБКА: {e}")
+            results = [InlineQueryResultArticle(id="error", title="❌ Ошибка", description="Ошибка определения языка",
+                                                input_message_content=InputTextMessageContent(
+                                                    message_text="❌ Ошибка перевода"))]
+
+    await inline_query.answer(results, cache_time=1)
+    print(f"✅ Отправлено {len(results)} готовых переводов")
+
 
 @dp.message(Command(commands=["start"]))
 async def send_hello(message: types.Message):
@@ -209,8 +394,12 @@ async def send_hello(message: types.Message):
             "• 📊 Статистика и аналитика\n"
             "• 🎤 Конвертация голоса в текст\n"
             "• 📸 Распознавание текста с фото\n"
-            "• 🔊 Текст в голосовые сообщения\n\n"
-            "📝 <b>Используйте /menu для доступа ко всем функциям</b>"
+            "• 🔊 Текст в голосовые сообщения\n"
+            "• 📜 История переводов\n"
+            "• 🚀 <b>Инлайн-режим</b> - перевод в любом чате!\n\n"
+            "📝 <b>Используйте /menu для доступа ко всем функциям</b>\n\n"
+            "💡 <b>Попробуйте инлайн-режим:</b>\n"
+            "Напишите <code>@TranslatorAlizh_bot Привет</code> в любом чате!"
         )
 
         await message.answer(banner, parse_mode="HTML")
@@ -250,6 +439,86 @@ async def translate_menu_callback(callback_query: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=get_language_menu()
     )
+    await callback_query.answer()
+
+@dp.callback_query(F.data.startswith("src_"))
+async def set_source_language(callback_query: types.CallbackQuery, state: FSMContext):  # ← ДОБАВЬТЕ state: FSMContext
+    source_lang = callback_query.data.split("_")[1]
+
+    lang_names = {
+        "auto": "🔍 Автоопределение", "ru": "🇷🇺 Русский", "en": "🇬🇧 Английский",
+        "de": "🇩🇪 Немецкий", "fr": "🇫🇷 Французский", "es": "🇪🇸 Испанский",
+        "az": "🇦🇿 Азербайджанский", "tr": "🇹🇷 Турецкий", "zh": "🇨🇳 Китайский"
+    }
+
+    await callback_query.message.edit_text(
+        f"🌍 <b>Исходный язык:</b> {lang_names.get(source_lang, source_lang)}\n"
+        f"Теперь выберите <b>целевой язык</b>:",
+        parse_mode="HTML",
+        reply_markup=get_target_language_menu(source_lang)
+    )
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data.startswith("target_"))
+async def set_target_language(callback_query: types.CallbackQuery, state: FSMContext):  # ← ДОБАВЬТЕ state: FSMContext
+    data = callback_query.data.split("_")
+    source_lang = data[1]
+    target_lang = data[2]
+
+    print(f"🎯 Установка состояния перевода: {source_lang} → {target_lang}")
+
+    lang_names = {
+        "ru": "русский", "en": "английский", "de": "немецкий",
+        "fr": "французский", "az": "азербайджанский", "tr": "турецкий"
+    }
+
+    await callback_query.message.edit_text(
+        f"✏️ <b>Отправьте текст для перевода</b>\n\n"
+        f"<b>Направление:</b> {lang_names.get(source_lang)} → {lang_names.get(target_lang)}\n\n"
+        f"Пример:\n<code>Привет, как дела?</code>",
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+
+    await state.update_data(
+        source_lang=source_lang,
+        target_lang=target_lang
+    )
+    await state.set_state(TranslationStates.waiting_for_text)
+
+    print(f"✅ Состояние установлено: waiting_for_text")
+
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data.startswith("pair_"))
+async def translate_popular_pair(callback_query: types.CallbackQuery,
+                                 state: FSMContext):  # ← ДОБАВЬТЕ state: FSMContext
+    data = callback_query.data.split("_")
+    source_lang = data[1]
+    target_lang = data[2]
+
+    print(f"🎯 Популярная пара: {source_lang} → {target_lang}")
+
+    lang_names = {"ru": "русский", "en": "английский", "de": "немецкий", "fr": "французский", "az": "азербайджанский"}
+
+    await callback_query.message.edit_text(
+        f"✏️ <b>Отправьте текст для перевода</b>\n\n"
+        f"<b>Направление:</b> {lang_names.get(source_lang)} → {lang_names.get(target_lang)}\n\n"
+        f"Пример:\n<code>Привет, как дела?</code>",
+        parse_mode="HTML",
+        reply_markup=get_back_button()
+    )
+
+    await state.update_data(
+        source_lang=source_lang,
+        target_lang=target_lang
+    )
+    await state.set_state(TranslationStates.waiting_for_text)
+
+    print(f"✅ Состояние установлено: waiting_for_text")
+
     await callback_query.answer()
 
 
@@ -522,80 +791,6 @@ async def custom_translate_callback(callback_query: types.CallbackQuery):
     await callback_query.answer()
 
 
-@dp.callback_query(F.data.startswith("src_"))
-async def set_source_language(callback_query: types.CallbackQuery):
-    source_lang = callback_query.data.split("_")[1]
-
-    lang_names = {
-        "auto": "🔍 Автоопределение", "ru": "🇷🇺 Русский", "en": "🇬🇧 Английский",
-        "de": "🇩🇪 Немецкий", "fr": "🇫🇷 Французский", "es": "🇪🇸 Испанский",
-        "az": "🇦🇿 Азербайджанский", "tr": "🇹🇷 Турецкий", "zh": "🇨🇳 Китайский"
-    }
-
-    await callback_query.message.edit_text(
-        f"🌍 <b>Исходный язык:</b> {lang_names.get(source_lang, source_lang)}\n"
-        f"Теперь выберите <b>целевой язык</b>:",
-        parse_mode="HTML",
-        reply_markup=get_target_language_menu(source_lang)
-    )
-    await callback_query.answer()
-
-
-@dp.callback_query(F.data.startswith("target_"))
-async def set_target_language(callback_query: types.CallbackQuery, state: FSMContext):  # ← ДОБАВЬТЕ state: FSMContext
-    data = callback_query.data.split("_")
-    source_lang = data[1]
-    target_lang = data[2]
-
-    lang_names = {
-        "ru": "русский", "en": "английский", "de": "немецкий",
-        "fr": "французский", "az": "азербайджанский", "tr": "турецкий"
-    }
-
-    await callback_query.message.edit_text(
-        f"✏️ <b>Отправьте текст для перевода</b>\n\n"
-        f"<b>Направление:</b> {lang_names.get(source_lang)} → {lang_names.get(target_lang)}\n\n"
-        f"Пример:\n<code>Привет, как дела?</code>",
-        parse_mode="HTML",
-        reply_markup=get_back_button()
-    )
-
-    # Сохраняем в FSM состоянии
-    await state.update_data(
-        source_lang=source_lang,
-        target_lang=target_lang
-    )
-    await state.set_state(TranslationStates.waiting_for_text)
-
-    await callback_query.answer()
-
-
-@dp.callback_query(F.data.startswith("pair_"))
-async def translate_popular_pair(callback_query: types.CallbackQuery,
-                                 state: FSMContext):  # ← ДОБАВЬТЕ state: FSMContext
-    data = callback_query.data.split("_")
-    source_lang = data[1]
-    target_lang = data[2]
-
-    lang_names = {"ru": "русский", "en": "английский", "de": "немецкий", "fr": "французский", "az": "азербайджанский"}
-
-    await callback_query.message.edit_text(
-        f"✏️ <b>Отправьте текст для перевода</b>\n\n"
-        f"<b>Направление:</b> {lang_names.get(source_lang)} → {lang_names.get(target_lang)}\n\n"
-        f"Пример:\n<code>Привет, как дела?</code>",
-        parse_mode="HTML",
-        reply_markup=get_back_button()
-    )
-
-    # Сохраняем в FSM состоянии
-    await state.update_data(
-        source_lang=source_lang,
-        target_lang=target_lang
-    )
-    await state.set_state(TranslationStates.waiting_for_text)
-
-    await callback_query.answer()
-
 @dp.message(Command(commands=["help"]))
 async def send_help(message: types.Message):
     update_stats(message.from_user.id, "/help")
@@ -610,13 +805,16 @@ async def send_help(message: types.Message):
         "/stats - Ваша статистика\n"
         "/top - Топ пользователей\n"
         "/about - Информация о боте\n\n"
+        "🚀 <b>Инлайн-режим:</b>\n"
+        "Напишите <code>@TranslatorAlizh_bot текст</code> в любом чате\n"
+        "Или <code>@TranslatorAlizh_bot en текст</code> для конкретного языка\n\n"
         "🔹 <b>Быстрый доступ через кнопки:</b>\n"
         "• Используйте меню внизу экрана\n"
         "• Все функции в одном месте\n\n"
         "📝 <b>Примеры использования:</b>\n"
         "<code>/translate en Привет мир</code>\n"
-        "<code>Отправьте голосовое сообщение</code>\n"
-        "<code>Отправьте фото с текстом</code>\n\n"
+        "<code>@TranslatorAlizh_bot de Hello</code>\n"
+        "<code>Отправьте голосовое сообщение</code>\n\n"
         "❓ <i>Если что-то не работает - перезапустите бота /start</i>"
     )
 
@@ -720,19 +918,6 @@ async def translate_text(message: types.Message):
             return
 
         await message.answer(f"🌍 Перевод ({lang.upper()}):\n{translated_text}")
-
-        user_id = message.from_user.id
-        if user_id not in user_history:
-            user_history[user_id] = []
-
-        user_history[user_id].append({
-            "original": text,
-            "translated": translated_text,
-            "lang": lang,
-            "time": datetime.now().strftime("%H:%M:%S %d.%m.%Y")
-        })
-        if len(user_history[user_id]) > 5:
-            user_history[user_id] = user_history[user_id][-5:]
 
         info_logger.info(f"Перевод: '{text}' -> '{translated_text}' [{lang}]")
 
@@ -951,62 +1136,9 @@ async def show_top(message: types.Message):
 
     await message.answer(text, parse_mode="HTML")
 
-
-@dp.message(Command(commands=["history"]))
-async def show_history(message: types.Message):
-    update_stats(message.from_user.id, "/history")
-    user_id = message.from_user.id
-    history = user_history.get(user_id)
-
-    if not history or len(history) == 0:
-        await message.answer("📂 У тебя пока нет истории переводов.")
-        return
-
-    text_lines = ["📜 <b>Твоя история переводов (последние 5):</b>\n"]
-    for i, item in enumerate(reversed(history), 1):
-        text_lines.append(
-            f"{i}. <b>{item['time']}</b>\n"
-            f"🌍 Язык: <code>{item['lang']}</code>\n"
-            f"📝 Оригинал: <i>{item['original']}</i>\n"
-            f"🔊 Перевод: <b>{item['translated']}</b>\n"
-            "───────────────────────"
-        )
-
-    text_lines.append("\n❌ Чтобы очистить историю, введи /clear_history")
-    await message.answer("\n".join(text_lines), parse_mode="HTML")
-
-@dp.message(Command("clear_history"))
-async def clear_history(message: types.Message):
-    update_stats(message.from_user.id, "/clear_history")
-    user_id = message.from_user.id
-    user_history[user_id] = []
-    await message.answer("🗑️ Ваша история переводов очищена.")
-
-@dp.message(F.text)
-async def echo_message(message: types.Message):
-    user_id = message.from_user.id
-    text = message.text.strip()
-
-    if user_id in user_langs:
-        lang = user_langs[user_id]
-        try:
-            translated = GoogleTranslator(source='auto', target=lang).translate(text)
-            await message.answer(f"✅ Перевод на {lang.upper()}:\n{translated}")
-            info_logger.info(f"Перевод {text} -> {translated} [{lang}]")
-        except Exception as e:
-            await message.answer("⚠️ Ошибка при переводе.")
-            error_logger.error(f"Ошибка при автопереводе: {e}")
-        return
-
 @dp.message(F.text.startswith("/"))
 async def unknown_command_handler(message: types.Message):
     await message.answer("❌ Неизвестная команда. Попробуйте /help")
-
-@dp.message()
-async def non_command_handler(message: types.Message):
-    await message.answer("🤖 Я понимаю только команды. Напишите /help для списка команд.")
-
-    await message.answer("Чтобы перевести текст используйте: /translate <язык> <текст>\nНапример: /translate en Привет")
 
 @dp.errors()
 async def handle_error(event):
@@ -1021,16 +1153,12 @@ async def main():
     finally:
         info_logger.info("Бот остановлен.")
 
-
 @dp.message(F.text & ~F.command())
 async def handle_all_text_messages(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     current_state = await state.get_state()
+    text = message.text.strip()
 
-    print(f"🔍 Получен текст: '{message.text}'")
-    print(f"📊 Текущее состояние FSM: {current_state}")
-
-    # Проверяем, находится ли пользователь в состоянии ожидания перевода
     if current_state == TranslationStates.waiting_for_text:
         print("🎯 Состояние: waiting_for_text - обрабатываем перевод")
 
@@ -1041,24 +1169,17 @@ async def handle_all_text_messages(message: types.Message, state: FSMContext):
         print(f"🌍 Языки перевода: {source_lang} → {target_lang}")
 
         try:
-            # Если выбран автоопределение
             if source_lang == "auto":
                 try:
-                    detected_lang = detect(message.text)
+                    detected_lang = detect(text)
                     source_lang = detected_lang
-                    print(f"🔍 Автоопределен язык: {detected_lang}")
                 except Exception as e:
-                    print(f"❌ Ошибка автоопределения: {e}")
                     source_lang = 'auto'
 
-            # Выполняем перевод
-            print("🔄 Начинаю перевод...")
             translated = GoogleTranslator(
                 source=source_lang if source_lang != "auto" else 'auto',
                 target=target_lang
-            ).translate(message.text)
-
-            print(f"✅ Перевод выполнен: {translated}")
+            ).translate(text)
 
             lang_names = {
                 "ru": "русский", "en": "английский", "de": "немецкий",
@@ -1072,17 +1193,30 @@ async def handle_all_text_messages(message: types.Message, state: FSMContext):
 
             await message.answer(
                 f"🌍 <b>Результат перевода:</b>\n\n"
-                f"📥 <b>Исходный текст ({source_display}):</b>\n<code>{message.text}</code>\n\n"
+                f"📥 <b>Исходный текст ({source_display}):</b>\n<code>{text}</code>\n\n"
                 f"📤 <b>Перевод ({lang_names.get(target_lang, target_lang)}):</b>\n<code>{translated}</code>\n\n"
                 f"💡 <i>Для нового перевода используйте меню</i>",
                 parse_mode="HTML",
                 reply_markup=get_main_inline_menu()
             )
 
-            update_stats(message.from_user.id, "translate")
+            update_stats(user_id, "translate")
+
+            translation_record = {
+                "original": message.text,
+                "translated": translated,
+                "direction": f"{source_lang}→{target_lang}",
+                "timestamp": datetime.now().strftime("%d.%m.%Y %H:%M")
+            }
+
+            if user_id not in user_translation_history:
+                user_translation_history[user_id] = []
+
+            user_translation_history[user_id].append(translation_record)
+            if len(user_translation_history[user_id]) > 10:
+                user_translation_history[user_id] = user_translation_history[user_id][-10:]
 
         except Exception as e:
-            print(f"❌ Ошибка перевода: {e}")
             await message.answer(
                 f"❌ <b>Ошибка перевода</b>\n\n"
                 f"Попробуйте еще раз или выберите другой язык.",
@@ -1090,13 +1224,19 @@ async def handle_all_text_messages(message: types.Message, state: FSMContext):
                 reply_markup=get_main_inline_menu()
             )
 
-        # Очищаем состояние
         await state.clear()
-        print("🗑️ Состояние очищено")
+
+    elif user_id in user_langs:
+        lang = user_langs[user_id]
+        try:
+            translated = GoogleTranslator(source='auto', target=lang).translate(text)
+            await message.answer(f"✅ Перевод на {lang.upper()}:\n{translated}")
+            info_logger.info(f"Перевод {text} -> {translated} [{lang}]")
+        except Exception as e:
+            await message.answer("⚠️ Ошибка при переводе.")
+            error_logger.error(f"Ошибка при автопереводе: {e}")
 
     else:
-        print("❌ Не в состоянии перевода - отправляем подсказку")
-        # Если это не перевод, обрабатываем как обычное сообщение
         await message.answer(
             "🤖 <b>Я понимаю команды и переводы</b>\n\n"
             "Для перевода используйте меню: /menu\n"
@@ -1108,4 +1248,3 @@ async def handle_all_text_messages(message: types.Message, state: FSMContext):
 if __name__ == "__main__":
     dp.startup.register(on_startup)
     asyncio.run(main())
-
