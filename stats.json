@@ -1,20 +1,20 @@
 {
     "7132674521": {
-        "messages": 138,
+        "messages": 154,
         "commands": {
-            "/start": 21,
+            "/start": 27,
             "/help": 7,
             "/info": 2,
-            "/menu": 37,
+            "/menu": 43,
             "/translate": 21,
-            "/about": 4,
+            "/about": 5,
             "/mood": 2,
             "stats": 6,
             "top": 8,
             "/stats": 8,
-            "/top": 13,
+            "/top": 15,
             "menu": 1,
-            "translate": 4,
+            "translate": 5,
             "/ptrans_translate": 4
         }
     },

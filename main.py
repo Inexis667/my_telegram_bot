@@ -17,6 +17,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 
+import sqlite3
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+from aiogram.fsm.storage.memory import MemoryStorage
+from contextlib import contextmanager
+
 from aiogram.types import FSInputFile
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from stats import update_stats, stats, get_user_stats
@@ -24,12 +32,8 @@ import html
 import logging
 from gtts import gTTS
 import asyncio
-import sqlite3
-from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
-import pandas as pd
-import seaborn as sns
-from contextlib import contextmanager
+
+
 import random
 import pytesseract
 import speech_recognition as sr
@@ -41,54 +45,8 @@ from aiogram.types import InlineQuery, InlineQueryResultArticle, InputTextMessag
 import time
 
 
-class StatisticsManager:
-    def __init__(self, db_path='bot_stats.db'):
-        self.db_path = db_path
-        self._init_database()
-
-    def _init_database(self):
-        """Инициализация базы данных для статистики"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # Таблица для статистики пользователей
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_stats (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                username TEXT,
-                action_type TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                details TEXT
-            )
-        ''')
-
-        # Индексы для быстрого поиска
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_id ON user_stats(user_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON user_stats(timestamp)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_action_type ON user_stats(action_type)')
-
-        conn.commit()
-        conn.close()
-
-    @contextmanager
-    def _get_connection(self):
-        """Контекстный менеджер для соединения с БД"""
-        conn = sqlite3.connect(self.db_path)
-        try:
-            yield conn
-        finally:
-            conn.close()
-
-    def log_action(self, user_id, username, action_type, details=""):
-        """Логирование действия пользователя"""
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO user_stats (user_id, username, action_type, details)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, username, action_type, details))
-            conn.commit()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
@@ -107,7 +65,237 @@ error_handler.setFormatter(error_formatter)
 error_logger.addHandler(error_handler)
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
+
+def check_db_file():
+    print("🔍 ПРОВЕРКА ФАЙЛА:")
+    print(f"📁 Папка: {os.getcwd()}")
+    print(f"📋 Файлы: {[f for f in os.listdir('.') if '.db' in f or '.py' in f]}")
+
+    if os.path.exists('bot_stats.db'):
+        size = os.path.getsize('bot_stats.db')
+        print(f"✅ bot_stats.db существует, размер: {size} байт")
+
+        if size == 0:
+            print("❌ Файл пустой!")
+            return False
+
+        try:
+            conn = sqlite3.connect('bot_stats.db')
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = cursor.fetchall()
+            print(f"📊 Таблицы: {[t[0] for t in tables]}")
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка открытия: {e}")
+            return False
+    else:
+        print("❌ Файл не найден!")
+        return False
+
+def check_and_show_stats():
+    """Проверка базы и показ статистики (вызывать вручную)"""
+    print("🔍 ПРОВЕРКА БАЗЫ ДАННЫХ:")
+
+    if not os.path.exists('bot_stats.db'):
+        print("❌ Файл bot_stats.db не найден")
+        return
+
+    try:
+        conn = sqlite3.connect('bot_stats.db')
+
+        # Проверяем есть ли таблица
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_stats';")
+        table_exists = cursor.fetchone()
+
+        if not table_exists:
+            print("❌ Таблица user_stats не существует")
+            conn.close()
+            return
+
+        print("✅ База данных работает корректно")
+
+        # Последние 10 записей
+        df = pd.read_sql_query("SELECT * FROM user_stats ORDER BY timestamp DESC LIMIT 10", conn)
+        print(f"\n📝 ПОСЛЕДНИЕ 10 ЗАПИСЕЙ ({len(df)} всего):")
+        if len(df) > 0:
+            print(df.to_string(index=False))
+        else:
+            print("   Нет записей")
+
+        # Статистика по командам
+        df_commands = pd.read_sql_query('''
+            SELECT action_type, COUNT(*) as count 
+            FROM user_stats 
+            GROUP BY action_type 
+            ORDER BY count DESC
+        ''', conn)
+        print(f"\n🎯 СТАТИСТИКА ПО КОМАНДАМ:")
+        if len(df_commands) > 0:
+            print(df_commands.to_string(index=False))
+        else:
+            print("   Нет данных")
+
+        conn.close()
+
+    except Exception as e:
+        print(f"❌ Ошибка при проверке базы: {e}")
+
+class StatisticsManager:
+    def __init__(self, db_path='bot_stats.db'):
+        self.db_path = db_path
+        self._init_database()
+
+    def _init_database(self):
+        """Инициализация базы данных для статистики"""
+        conn = sqlite3.connect(self.db_path)
+
+        # Регистрируем адаптеры для datetime (исправление для Python 3.12)
+        sqlite3.register_adapter(datetime, lambda dt: dt.isoformat())
+        sqlite3.register_converter("timestamp", lambda v: datetime.fromisoformat(v.decode()))
+
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                username TEXT,
+                action_type TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                details TEXT
+            )
+        ''')
+
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_id ON user_stats(user_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON user_stats(timestamp)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_action_type ON user_stats(action_type)')
+
+        conn.commit()
+        conn.close()
+
+    @contextmanager
+    def _get_connection(self):
+        """Контекстный менеджер для соединения с БД"""
+        # Добавляем детектирование типов для правильной работы с datetime
+        conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def log_action(self, user_id, username, action_type, details=""):
+        """Логирование действия пользователя"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO user_stats (user_id, username, action_type, details)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, username, action_type, details))
+            conn.commit()
+
+    def get_bot_stats(self):
+        """Получение общей статистики бота"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            stats = {}
+
+            cursor.execute('SELECT COUNT(DISTINCT user_id) FROM user_stats')
+            stats['total_users'] = cursor.fetchone()[0]
+
+            cursor.execute('SELECT COUNT(*) FROM user_stats')
+            stats['total_actions'] = cursor.fetchone()[0]
+
+            cursor.execute('''
+                SELECT user_id, username, COUNT(*) as action_count 
+                FROM user_stats 
+                GROUP BY user_id 
+                ORDER BY action_count DESC 
+                LIMIT 5
+            ''')
+            stats['top_users'] = cursor.fetchall()
+
+            cursor.execute('''
+                SELECT action_type, COUNT(*) as count 
+                FROM user_stats 
+                GROUP BY action_type 
+                ORDER BY count DESC 
+                LIMIT 10
+            ''')
+            stats['top_commands'] = cursor.fetchall()
+
+            # Используем ISO формат для дат
+            cursor.execute('''
+                SELECT DATE(timestamp), COUNT(*) 
+                FROM user_stats 
+                WHERE timestamp >= datetime('now', '-7 days')
+                GROUP BY DATE(timestamp)
+                ORDER BY DATE(timestamp) DESC
+            ''')
+            stats['weekly_activity'] = cursor.fetchall()
+
+            cursor.execute('''
+                SELECT COUNT(*) FROM user_stats 
+                WHERE DATE(timestamp) = DATE('now')
+            ''')
+            stats['today_actions'] = cursor.fetchone()[0]
+
+            return stats
+
+    def get_user_stats(self, user_id, days=7):
+        """Получение статистики конкретного пользователя"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Используем SQLite функции для дат
+            since_date = f"datetime('now', '-{days} days')"
+
+            cursor.execute('''
+                SELECT 
+                    COUNT(*) as total_actions,
+                    COUNT(DISTINCT DATE(timestamp)) as active_days,
+                    MIN(timestamp) as first_seen,
+                    MAX(timestamp) as last_seen
+                FROM user_stats 
+                WHERE user_id = ?
+            ''', (user_id,))
+
+            user_stats = cursor.fetchone()
+
+            cursor.execute('''
+                SELECT action_type, COUNT(*) as count
+                FROM user_stats 
+                WHERE user_id = ?
+                GROUP BY action_type 
+                ORDER BY count DESC
+            ''', (user_id,))
+
+            action_stats = cursor.fetchall()
+
+            cursor.execute(f'''
+                SELECT DATE(timestamp), COUNT(*) 
+                FROM user_stats 
+                WHERE user_id = ? AND timestamp >= {since_date}
+                GROUP BY DATE(timestamp)
+                ORDER BY DATE(timestamp) DESC
+            ''', (user_id,))
+
+            recent_activity = cursor.fetchall()
+
+            return {
+                'total_actions': user_stats[0] if user_stats else 0,
+                'active_days': user_stats[1] if user_stats else 0,
+                'first_seen': user_stats[2] if user_stats else None,
+                'last_seen': user_stats[3] if user_stats else None,
+                'action_stats': action_stats,
+                'recent_activity': recent_activity
+            }
+
 stats_manager = StatisticsManager()
 
 async def on_startup(bot: Bot):
@@ -318,10 +506,15 @@ async def clear_history_callback(callback_query: types.CallbackQuery):
 
 @dp.inline_query()
 async def inline_translator(inline_query: InlineQuery):
+    stats_manager.log_action(
+        user_id=inline_query.from_user.id,
+        username=inline_query.from_user.username,
+        action_type='inline_query',
+        details=f"query: {inline_query.query[:50]}"
+    )
     print(f"🔍 ИНЛАЙН ЗАПРОС: '{inline_query.query}' от {inline_query.from_user.id}")
     query = inline_query.query.strip()
 
-    # Если запрос пустой - показываем подсказку
     if not query:
         results = [
             InlineQueryResultArticle(
@@ -468,6 +661,11 @@ async def send_hello(message: types.Message):
 @dp.message(Command("menu"))
 @dp.message(F.text == "⚙️ Настройки")
 async def show_menu(message: types.Message):
+    stats_manager.log_action(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        action_type='menu_command'
+    )
     update_stats(message.from_user.id, "/menu")
 
     await message.answer(
@@ -599,8 +797,15 @@ async def translate_with_choice(callback_query: types.CallbackQuery):
 
 @dp.callback_query(F.data == "stats_menu")
 async def stats_menu_callback(callback_query: types.CallbackQuery):
+    stats_manager.log_action(
+        user_id=callback_query.from_user.id,
+        username=callback_query.from_user.username,
+        action_type='stats_menu_callback'
+    )
+
     user_id = str(callback_query.from_user.id)
     user_data = stats.get(user_id, {"messages": 0, "commands": {}})
+    bot_stats = stats_manager.get_bot_stats()
 
     total_commands = sum(user_data["commands"].values())
     top_commands = "\n".join([f"• {cmd}: {count}" for cmd, count in
@@ -609,8 +814,9 @@ async def stats_menu_callback(callback_query: types.CallbackQuery):
     await callback_query.message.edit_text(
         f"📊 <b>Ваша статистика:</b>\n\n"
         f"💬 Сообщений: {user_data['messages']}\n"
-        f"⚡ Команд: {total_commands}\n"
-        f"👥 Всего пользователей: {len(stats)}\n\n"
+        f"⚡️ Команд: {total_commands}\n"
+        f"👥 Всего пользователей: {bot_stats['total_users']}\n"
+        f"📈 Всего действий в боте: {bot_stats['total_actions']}\n\n"
         f"🏆 <b>Топ команд:</b>\n{top_commands}\n\n"
         f"<i>Используйте /stats для подробной статистики</i>",
         parse_mode="HTML",
@@ -715,6 +921,12 @@ async def bot_functions_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query(F.data == "voice_to_text")
 async def voice_to_text_callback(callback_query: types.CallbackQuery):
+    stats_manager.log_action(
+        user_id=callback_query.from_user.id,
+        username=callback_query.from_user.username,
+        action_type='voice_to_text_callback'
+    )
+
     await callback_query.message.edit_text(
         "🎤 <b>Голос → Текст</b>\n\n"
         "Отправьте голосовое сообщение или аудиофайл, и я преобразую его в текст.\n\n"
@@ -1144,28 +1356,101 @@ async def handle_voice(message: types.Message):
 
 
 @dp.message(Command("stats"))
-async def show_stats(message: types.Message):
-
-    update_stats(message.from_user.id, "/stats")
-
-    user_id = str(message.from_user.id)
-    user_data = stats.get(user_id, {"messages": 0, "commands": {}})
-
-    total_users = len(stats)
-    total_messages = sum(u["messages"] for u in stats.values())
-
-    cmds = sorted(user_data["commands"].items(), key=lambda x: x[1], reverse=True)
-    top_commands = "\n".join([f"{cmd}: {count}" for cmd, count in cmds[:5]]) if cmds else "— нет данных —"
-
-    response = (
-        f"📈 <b>Твоя статистика:</b>\n"
-        f"Сообщений: {user_data['messages']}\n"
-        f"Топ-5 команд:\n{top_commands}\n\n"
-        f"👥 Пользователей: {total_users}\n"
-        f"💬 Всего сообщений: {total_messages}"
+async def show_detailed_stats(message: types.Message):
+    """Расширенная статистика бота"""
+    stats_manager.log_action(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        action_type='stats_command'
     )
 
-    await message.answer(response, parse_mode="HTML")
+    bot_stats = stats_manager.get_bot_stats()
+    user_stats = stats_manager.get_user_stats(message.from_user.id)
+
+    stats_text = f"""
+📊 <b>РАСШИРЕННАЯ СТАТИСТИКА БОТА</b>
+
+👥 <b>Общая статистика:</b>
+• Пользователей: <b>{bot_stats['total_users']}</b>
+• Действий сегодня: <b>{bot_stats['today_actions']}</b>
+• Всего действий: <b>{bot_stats['total_actions']}</b>
+
+👤 <b>Ваша статистика:</b>
+• Ваших действий: <b>{user_stats['total_actions']}</b>
+• Активных дней: <b>{user_stats['active_days']}</b>
+• Первое использование: <b>{user_stats['first_seen'][:10] if user_stats['first_seen'] else 'Недавно'}</b>
+
+🏆 <b>Топ команд бота:</b>
+"""
+
+    for action_type, count in bot_stats['top_commands'][:5]:
+        emoji = "🔹"
+        if "start" in action_type.lower():
+            emoji = "🚀"
+        elif "translate" in action_type.lower():
+            emoji = "🌍"
+        elif "menu" in action_type.lower():
+            emoji = "📊"
+        elif "help" in action_type.lower():
+            emoji = "❓"
+
+        stats_text += f"{emoji} {action_type}: {count}\n"
+
+    stats_text += f"\n📈 <b>Ваши основные действия:</b>\n"
+    for action_type, count in user_stats['action_stats'][:5]:
+        percentage = (count / user_stats['total_actions']) * 100 if user_stats['total_actions'] > 0 else 0
+        stats_text += f"• {action_type}: {count} ({percentage:.1f}%)\n"
+
+    # Уровень активности
+    if user_stats['total_actions'] > 100:
+        level = "🔥 ЛЕГЕНДА"
+    elif user_stats['total_actions'] > 50:
+        level = "⭐ ПРОФИ"
+    elif user_stats['total_actions'] > 20:
+        level = "👍 АКТИВНЫЙ"
+    elif user_stats['total_actions'] > 5:
+        level = "🌱 НОВИЧОК"
+    else:
+        level = "🎯 НАЧИНАЮЩИЙ"
+
+    stats_text += f"\n🎖️ <b>Ваш уровень:</b> {level}"
+
+    await message.answer(stats_text, parse_mode="HTML")
+
+
+@dp.message(Command("my_stats"))
+async def show_personal_stats(message: types.Message):
+    """Детальная персональная статистика"""
+    stats_manager.log_action(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        action_type='my_stats_command'
+    )
+
+    user_stats = stats_manager.get_user_stats(message.from_user.id)
+
+    stats_text = f"""
+📈 <b>ВАША ДЕТАЛЬНАЯ СТАТИСТИКА</b>
+
+📊 <b>Основные метрики:</b>
+• Всего действий: <b>{user_stats['total_actions']}</b>
+• Активных дней: <b>{user_stats['active_days']}</b>
+• Первое использование: <b>{user_stats['first_seen'][:16] if user_stats['first_seen'] else 'Недавно'}</b>
+• Последняя активность: <b>{user_stats['last_seen'][:16] if user_stats['last_seen'] else 'Сейчас'}</b>
+
+📋 <b>Распределение действий:</b>
+"""
+
+    for action_type, count in user_stats['action_stats']:
+        percentage = (count / user_stats['total_actions']) * 100 if user_stats['total_actions'] > 0 else 0
+        stats_text += f"• {action_type}: {count} ({percentage:.1f}%)\n"
+
+    if user_stats['recent_activity']:
+        stats_text += f"\n📅 <b>Активность за неделю:</b>\n"
+        for date, count in user_stats['recent_activity']:
+            stats_text += f"• {date}: {count} действий\n"
+
+    await message.answer(stats_text, parse_mode="HTML")
 
 
 @dp.message(Command("top"))
@@ -1301,6 +1586,10 @@ async def handle_all_text_messages(message: types.Message, state: FSMContext):
             reply_markup=get_main_inline_menu()
         )
 
-if __name__ == "__main__":
-    dp.startup.register(on_startup)
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == '__main__':
+    import asyncio
     asyncio.run(main())
