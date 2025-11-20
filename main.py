@@ -24,7 +24,12 @@ import html
 import logging
 from gtts import gTTS
 import asyncio
-from datetime import datetime
+import sqlite3
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+from contextlib import contextmanager
 import random
 import pytesseract
 import speech_recognition as sr
@@ -34,6 +39,56 @@ from langdetect import detect, LangDetectException
 from deep_translator import GoogleTranslator
 from aiogram.types import InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 import time
+
+
+class StatisticsManager:
+    def __init__(self, db_path='bot_stats.db'):
+        self.db_path = db_path
+        self._init_database()
+
+    def _init_database(self):
+        """Инициализация базы данных для статистики"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Таблица для статистики пользователей
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                username TEXT,
+                action_type TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                details TEXT
+            )
+        ''')
+
+        # Индексы для быстрого поиска
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_id ON user_stats(user_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON user_stats(timestamp)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_action_type ON user_stats(action_type)')
+
+        conn.commit()
+        conn.close()
+
+    @contextmanager
+    def _get_connection(self):
+        """Контекстный менеджер для соединения с БД"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def log_action(self, user_id, username, action_type, details=""):
+        """Логирование действия пользователя"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO user_stats (user_id, username, action_type, details)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, username, action_type, details))
+            conn.commit()
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
@@ -53,6 +108,7 @@ error_logger.addHandler(error_handler)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+stats_manager = StatisticsManager()
 
 async def on_startup(bot: Bot):
     me = await bot.get_me()
@@ -284,13 +340,11 @@ async def inline_translator(inline_query: InlineQuery):
         await inline_query.answer(results, cache_time=1)
         return
 
-    # Парсим запрос: "язык текст" или просто текст
     parts = query.split(' ', 1)
     if len(parts) == 2 and len(parts[0]) == 2:  # формат "en текст"
         target_lang = parts[0].lower()
         text_to_translate = parts[1]
 
-        # Перевод на один конкретный язык
         try:
             detected_lang = detect(text_to_translate)
             translated = GoogleTranslator(source=detected_lang, target=target_lang).translate(text_to_translate)
@@ -322,19 +376,17 @@ async def inline_translator(inline_query: InlineQuery):
                                                     message_text="❌ Ошибка перевода"))]
 
     else:
-        # Просто текст - показываем готовые переводы на разные языки
         text_to_translate = query
 
         try:
             detected_lang = detect(text_to_translate)
             print(f"✅ Язык определен: {detected_lang}")
 
-            # Популярные языки для перевода
             target_languages = ["en", "de", "fr", "es", "it", "ru"]
 
             results = []
             for lang in target_languages:
-                if lang != detected_lang:  # не переводим на тот же язык
+                if lang != detected_lang:
                     try:
                         translated = GoogleTranslator(source=detected_lang, target=lang).translate(text_to_translate)
 
@@ -358,7 +410,6 @@ async def inline_translator(inline_query: InlineQuery):
                     except Exception as e:
                         continue
 
-            # Если нет результатов
             if not results:
                 results = [InlineQueryResultArticle(id="error", title="❌ Ошибка", description="Не удалось перевести",
                                                     input_message_content=InputTextMessageContent(
@@ -376,6 +427,11 @@ async def inline_translator(inline_query: InlineQuery):
 
 @dp.message(Command(commands=["start"]))
 async def send_hello(message: types.Message):
+    stats_manager.log_action(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        action_type='start_command'
+    )
     try:
         update_stats(message.from_user.id, "/start")
 
