@@ -68,6 +68,7 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+
 def check_db_file():
     print("🔍 ПРОВЕРКА ФАЙЛА:")
     print(f"📁 Папка: {os.getcwd()}")
@@ -95,55 +96,6 @@ def check_db_file():
     else:
         print("❌ Файл не найден!")
         return False
-
-def check_and_show_stats():
-    """Проверка базы и показ статистики (вызывать вручную)"""
-    print("🔍 ПРОВЕРКА БАЗЫ ДАННЫХ:")
-
-    if not os.path.exists('bot_stats.db'):
-        print("❌ Файл bot_stats.db не найден")
-        return
-
-    try:
-        conn = sqlite3.connect('bot_stats.db')
-
-        # Проверяем есть ли таблица
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_stats';")
-        table_exists = cursor.fetchone()
-
-        if not table_exists:
-            print("❌ Таблица user_stats не существует")
-            conn.close()
-            return
-
-        print("✅ База данных работает корректно")
-
-        # Последние 10 записей
-        df = pd.read_sql_query("SELECT * FROM user_stats ORDER BY timestamp DESC LIMIT 10", conn)
-        print(f"\n📝 ПОСЛЕДНИЕ 10 ЗАПИСЕЙ ({len(df)} всего):")
-        if len(df) > 0:
-            print(df.to_string(index=False))
-        else:
-            print("   Нет записей")
-
-        # Статистика по командам
-        df_commands = pd.read_sql_query('''
-            SELECT action_type, COUNT(*) as count 
-            FROM user_stats 
-            GROUP BY action_type 
-            ORDER BY count DESC
-        ''', conn)
-        print(f"\n🎯 СТАТИСТИКА ПО КОМАНДАМ:")
-        if len(df_commands) > 0:
-            print(df_commands.to_string(index=False))
-        else:
-            print("   Нет данных")
-
-        conn.close()
-
-    except Exception as e:
-        print(f"❌ Ошибка при проверке базы: {e}")
 
 class StatisticsManager:
     def __init__(self, db_path='bot_stats.db'):
@@ -297,6 +249,55 @@ class StatisticsManager:
             }
 
 stats_manager = StatisticsManager()
+
+def check_and_show_stats():
+    """Проверка базы и показ статистики (вызывать вручную)"""
+    print("🔍 ПРОВЕРКА БАЗЫ ДАННЫХ:")
+
+    if not os.path.exists('bot_stats.db'):
+        print("❌ Файл bot_stats.db не найден")
+        return
+
+    try:
+        conn = sqlite3.connect('bot_stats.db')
+
+        # Проверяем есть ли таблица
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_stats';")
+        table_exists = cursor.fetchone()
+
+        if not table_exists:
+            print("❌ Таблица user_stats не существует")
+            conn.close()
+            return
+
+        print("✅ База данных работает корректно")
+
+        # Последние 10 записей
+        df = pd.read_sql_query("SELECT * FROM user_stats ORDER BY timestamp DESC LIMIT 10", conn)
+        print(f"\n📝 ПОСЛЕДНИЕ 10 ЗАПИСЕЙ ({len(df)} всего):")
+        if len(df) > 0:
+            print(df.to_string(index=False))
+        else:
+            print("   Нет записей")
+
+        # Статистика по командам
+        df_commands = pd.read_sql_query('''
+            SELECT action_type, COUNT(*) as count 
+            FROM user_stats 
+            GROUP BY action_type 
+            ORDER BY count DESC
+        ''', conn)
+        print(f"\n🎯 СТАТИСТИКА ПО КОМАНДАМ:")
+        if len(df_commands) > 0:
+            print(df_commands.to_string(index=False))
+        else:
+            print("   Нет данных")
+
+        conn.close()
+
+    except Exception as e:
+        print(f"❌ Ошибка при проверке базы: {e}")
 
 async def on_startup(bot: Bot):
     me = await bot.get_me()
@@ -1588,8 +1589,20 @@ async def handle_all_text_messages(message: types.Message, state: FSMContext):
 
 
 async def main():
+    """Основная функция запуска бота"""
+    print("🔄 Проверка базы данных...")
+    check_and_show_stats()
+
+    print("🚀 Запуск бота...")
     await dp.start_polling(bot)
+
 
 if __name__ == '__main__':
     import asyncio
-    asyncio.run(main())
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("⏹️ Бот остановлен")
+    except Exception as e:
+        print(f"❌ Ошибка запуска: {e}")
