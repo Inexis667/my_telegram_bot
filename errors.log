@@ -81,3 +81,6 @@ Please select on of the supported languages:
 2025-11-20 21:47:11,625 - ERROR - Ошибка: database is locked
 2025-11-20 21:47:37,716 - ERROR - Ошибка: database is locked
 2025-11-20 21:48:37,686 - ERROR - Ошибка: database is locked
+2025-11-20 23:08:10,306 - ERROR - Ошибка: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+2025-11-20 23:08:13,354 - ERROR - Ошибка: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+2025-11-20 23:08:16,460 - ERROR - Ошибка: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
