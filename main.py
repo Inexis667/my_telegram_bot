@@ -900,11 +900,9 @@ async def text_to_voice_callback(callback_query: types.CallbackQuery, state: FSM
 
 @dp.message(TTSStates.waiting_for_tts_text)
 async def handle_tts_text(message: types.Message, state: FSMContext):
-    """Обработчик текста для TTS с переводом"""
     try:
         text = message.text.strip()
 
-        # Пропускаем команды
         if text.startswith('/'):
             return
 
@@ -917,7 +915,6 @@ async def handle_tts_text(message: types.Message, state: FSMContext):
             await message.answer("❌ Текст пустой.")
             return
 
-        # Показываем меню выбора языка
         await message.answer(
             "🌍 <b>Выберите язык для перевода и озвучки:</b>",
             parse_mode="HTML",
@@ -939,7 +936,6 @@ async def handle_tts_text(message: types.Message, state: FSMContext):
             ])
         )
 
-        # Сохраняем текст в состоянии
         await state.update_data(tts_text=text)
 
     except Exception as e:
@@ -949,12 +945,9 @@ async def handle_tts_text(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("tts_translate_"))
 async def handle_tts_translate(callback_query: types.CallbackQuery, state: FSMContext):
-    """Обработчик выбора языка для TTS"""
     try:
-        # Получаем выбранный язык
         target_lang = callback_query.data.split('_')[2]  # en, de, fr и т.д.
 
-        # Получаем сохраненный текст
         data = await state.get_data()
         text = data.get('tts_text', '')
 
@@ -964,13 +957,11 @@ async def handle_tts_translate(callback_query: types.CallbackQuery, state: FSMCo
 
         await callback_query.message.edit_text("🔄 Перевод и озвучка...")
 
-        # Определяем исходный язык
         try:
             source_lang = detect(text)
         except:
             source_lang = 'auto'
 
-        # Переводим текст
         try:
             translated_text = GoogleTranslator(source=source_lang, target=target_lang).translate(text)
         except Exception as e:
@@ -978,7 +969,6 @@ async def handle_tts_translate(callback_query: types.CallbackQuery, state: FSMCo
             await state.clear()
             return
 
-        # Озвучиваем переведенный текст
         processing_msg = await callback_query.message.answer("🔊 Создаю голосовое сообщение...")
 
         try:
@@ -986,7 +976,6 @@ async def handle_tts_translate(callback_query: types.CallbackQuery, state: FSMCo
             voice_path = f"voice_{callback_query.from_user.id}_{int(time.time())}.mp3"
             tts.save(voice_path)
 
-            # Отправляем результат
             lang_names = {
                 'en': 'Английский', 'de': 'Немецкий', 'fr': 'Французский',
                 'es': 'Испанский', 'it': 'Итальянский', 'az': 'Азербайджанский',
@@ -1000,7 +989,6 @@ async def handle_tts_translate(callback_query: types.CallbackQuery, state: FSMCo
                         f"🔊 Озвучка: {translated_text}"
             )
 
-            # Логируем действие
             stats_manager.log_action(
                 user_id=callback_query.from_user.id,
                 username=callback_query.from_user.username,
@@ -1008,7 +996,6 @@ async def handle_tts_translate(callback_query: types.CallbackQuery, state: FSMCo
                 details=f"from {source_lang} to {target_lang}, length: {len(text)}"
             )
 
-            # Удаляем временный файл
             os.remove(voice_path)
             await processing_msg.delete()
 
@@ -1026,7 +1013,6 @@ async def handle_tts_translate(callback_query: types.CallbackQuery, state: FSMCo
 
 @dp.callback_query(F.data == "cancel_tts")
 async def cancel_tts(callback_query: types.CallbackQuery, state: FSMContext):
-    """Отмена TTS"""
     await state.clear()
     await callback_query.message.edit_text(
         "🎛️ <b>Главное меню</b>",
@@ -1371,14 +1357,12 @@ async def handle_voice(message: types.Message, state: FSMContext):
     if current_state == TTSStates.waiting_for_tts_text:
         return
 
-    # Остальной код обработчика голосовых сообщений...
     user_id = message.from_user.id
     file_path_ogg = f"voice_{user_id}.ogg"
     file_path_wav = f"voice_{user_id}.wav"
     tts_path = f"translated_{user_id}.mp3"
 
     try:
-        # Логируем действие
         stats_manager.log_action(
             user_id=message.from_user.id,
             username=message.from_user.username,
@@ -1502,7 +1486,6 @@ async def show_detailed_stats(message: types.Message):
 
 @dp.message(Command("my_stats"))
 async def show_personal_stats(message: types.Message):
-    """Детальная персональная статистика"""
     stats_manager.log_action(
         user_id=message.from_user.id,
         username=message.from_user.username,
