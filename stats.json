@@ -1,11 +1,11 @@
 {
     "7132674521": {
-        "messages": 157,
+        "messages": 174,
         "commands": {
-            "/start": 29,
+            "/start": 32,
             "/help": 7,
             "/info": 2,
-            "/menu": 44,
+            "/menu": 56,
             "/translate": 21,
             "/about": 5,
             "/mood": 2,
@@ -15,17 +15,19 @@
             "/top": 15,
             "menu": 1,
             "translate": 5,
-            "/ptrans_translate": 4
+            "/ptrans_translate": 6
         }
     },
     "7191831551": {
-        "messages": 24,
+        "messages": 43,
         "commands": {
             "/start": 2,
-            "/menu": 12,
+            "/menu": 18,
             "/mood": 3,
             "/help": 1,
-            "/translate": 6
+            "/translate": 6,
+            "translate": 6,
+            "/ptrans_translate": 7
         }
     },
     "6037866365": {

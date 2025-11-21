@@ -31,7 +31,6 @@ from stats import update_stats, stats, get_user_stats
 import html
 import logging
 from gtts import gTTS
-import asyncio
 
 
 import random
@@ -68,45 +67,14 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-
-def check_db_file():
-    print("🔍 ПРОВЕРКА ФАЙЛА:")
-    print(f"📁 Папка: {os.getcwd()}")
-    print(f"📋 Файлы: {[f for f in os.listdir('.') if '.db' in f or '.py' in f]}")
-
-    if os.path.exists('bot_stats.db'):
-        size = os.path.getsize('bot_stats.db')
-        print(f"✅ bot_stats.db существует, размер: {size} байт")
-
-        if size == 0:
-            print("❌ Файл пустой!")
-            return False
-
-        try:
-            conn = sqlite3.connect('bot_stats.db')
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            tables = cursor.fetchall()
-            print(f"📊 Таблицы: {[t[0] for t in tables]}")
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"❌ Ошибка открытия: {e}")
-            return False
-    else:
-        print("❌ Файл не найден!")
-        return False
-
 class StatisticsManager:
     def __init__(self, db_path='bot_stats.db'):
         self.db_path = db_path
         self._init_database()
 
     def _init_database(self):
-        """Инициализация базы данных для статистики"""
         conn = sqlite3.connect(self.db_path)
 
-        # Регистрируем адаптеры для datetime (исправление для Python 3.12)
         sqlite3.register_adapter(datetime, lambda dt: dt.isoformat())
         sqlite3.register_converter("timestamp", lambda v: datetime.fromisoformat(v.decode()))
 
@@ -132,8 +100,6 @@ class StatisticsManager:
 
     @contextmanager
     def _get_connection(self):
-        """Контекстный менеджер для соединения с БД"""
-        # Добавляем детектирование типов для правильной работы с datetime
         conn = sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES)
         try:
             yield conn
@@ -141,7 +107,6 @@ class StatisticsManager:
             conn.close()
 
     def log_action(self, user_id, username, action_type, details=""):
-        """Логирование действия пользователя"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -151,7 +116,6 @@ class StatisticsManager:
             conn.commit()
 
     def get_bot_stats(self):
-        """Получение общей статистики бота"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -181,7 +145,6 @@ class StatisticsManager:
             ''')
             stats['top_commands'] = cursor.fetchall()
 
-            # Используем ISO формат для дат
             cursor.execute('''
                 SELECT DATE(timestamp), COUNT(*) 
                 FROM user_stats 
@@ -200,11 +163,9 @@ class StatisticsManager:
             return stats
 
     def get_user_stats(self, user_id, days=7):
-        """Получение статистики конкретного пользователя"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Используем SQLite функции для дат
             since_date = f"datetime('now', '-{days} days')"
 
             cursor.execute('''
@@ -250,54 +211,6 @@ class StatisticsManager:
 
 stats_manager = StatisticsManager()
 
-def check_and_show_stats():
-    """Проверка базы и показ статистики (вызывать вручную)"""
-    print("🔍 ПРОВЕРКА БАЗЫ ДАННЫХ:")
-
-    if not os.path.exists('bot_stats.db'):
-        print("❌ Файл bot_stats.db не найден")
-        return
-
-    try:
-        conn = sqlite3.connect('bot_stats.db')
-
-        # Проверяем есть ли таблица
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_stats';")
-        table_exists = cursor.fetchone()
-
-        if not table_exists:
-            print("❌ Таблица user_stats не существует")
-            conn.close()
-            return
-
-        print("✅ База данных работает корректно")
-
-        # Последние 10 записей
-        df = pd.read_sql_query("SELECT * FROM user_stats ORDER BY timestamp DESC LIMIT 10", conn)
-        print(f"\n📝 ПОСЛЕДНИЕ 10 ЗАПИСЕЙ ({len(df)} всего):")
-        if len(df) > 0:
-            print(df.to_string(index=False))
-        else:
-            print("   Нет записей")
-
-        # Статистика по командам
-        df_commands = pd.read_sql_query('''
-            SELECT action_type, COUNT(*) as count 
-            FROM user_stats 
-            GROUP BY action_type 
-            ORDER BY count DESC
-        ''', conn)
-        print(f"\n🎯 СТАТИСТИКА ПО КОМАНДАМ:")
-        if len(df_commands) > 0:
-            print(df_commands.to_string(index=False))
-        else:
-            print("   Нет данных")
-
-        conn.close()
-
-    except Exception as e:
-        print(f"❌ Ошибка при проверке базы: {e}")
 
 async def on_startup(bot: Bot):
     me = await bot.get_me()
@@ -308,6 +221,9 @@ user_translation_data = {}
 
 class TranslationStates(StatesGroup):
     waiting_for_text = State()
+
+class TTSStates(StatesGroup):
+    waiting_for_tts_text = State()
 
 async def log_api_call(name: str, coro):
     start_time = time.time()
@@ -959,7 +875,13 @@ async def text_from_photo_callback(callback_query: types.CallbackQuery):
 
 
 @dp.callback_query(F.data == "text_to_voice")
-async def text_to_voice_callback(callback_query: types.CallbackQuery):
+async def text_to_voice_callback(callback_query: types.CallbackQuery, state: FSMContext):
+    stats_manager.log_action(
+        user_id=callback_query.from_user.id,
+        username=callback_query.from_user.username,
+        action_type='text_to_voice_callback'
+    )
+
     await callback_query.message.edit_text(
         "🔊 <b>Текст → Голос</b>\n\n"
         "Отправьте текст, и я преобразую его в голосовое сообщение.\n\n"
@@ -970,6 +892,146 @@ async def text_to_voice_callback(callback_query: types.CallbackQuery):
         "💡 <i>Просто отправьте текст - бот ответит голосовым сообщением</i>",
         parse_mode="HTML",
         reply_markup=get_back_button()
+    )
+
+    await state.set_state(TTSStates.waiting_for_tts_text)
+
+    await callback_query.answer()
+
+@dp.message(TTSStates.waiting_for_tts_text)
+async def handle_tts_text(message: types.Message, state: FSMContext):
+    """Обработчик текста для TTS с переводом"""
+    try:
+        text = message.text.strip()
+
+        # Пропускаем команды
+        if text.startswith('/'):
+            return
+
+        if len(text) > 1000:
+            await message.answer("❌ Текст слишком длинный. Максимум 1000 символов.")
+            await state.clear()
+            return
+
+        if not text:
+            await message.answer("❌ Текст пустой.")
+            return
+
+        # Показываем меню выбора языка
+        await message.answer(
+            "🌍 <b>Выберите язык для перевода и озвучки:</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🇬🇧 Английский", callback_data=f"tts_translate_en_{message.message_id}"),
+                    InlineKeyboardButton(text="🇩🇪 Немецкий", callback_data=f"tts_translate_de_{message.message_id}"),
+                    InlineKeyboardButton(text="🇫🇷 Французский", callback_data=f"tts_translate_fr_{message.message_id}")
+                ],
+                [
+                    InlineKeyboardButton(text="🇪🇸 Испанский", callback_data=f"tts_translate_es_{message.message_id}"),
+                    InlineKeyboardButton(text="🇮🇹 Итальянский", callback_data=f"tts_translate_it_{message.message_id}"),
+                    InlineKeyboardButton(text="🇦🇿 Азербайджанский",
+                                         callback_data=f"tts_translate_az_{message.message_id}")
+                ],
+                [
+                    InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_tts")
+                ]
+            ])
+        )
+
+        # Сохраняем текст в состоянии
+        await state.update_data(tts_text=text)
+
+    except Exception as e:
+        error_logger.error(f"Ошибка TTS: {e}")
+        await message.answer("❌ Ошибка при обработке текста")
+        await state.clear()
+
+@dp.callback_query(F.data.startswith("tts_translate_"))
+async def handle_tts_translate(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик выбора языка для TTS"""
+    try:
+        # Получаем выбранный язык
+        target_lang = callback_query.data.split('_')[2]  # en, de, fr и т.д.
+
+        # Получаем сохраненный текст
+        data = await state.get_data()
+        text = data.get('tts_text', '')
+
+        if not text:
+            await callback_query.answer("❌ Текст не найден")
+            return
+
+        await callback_query.message.edit_text("🔄 Перевод и озвучка...")
+
+        # Определяем исходный язык
+        try:
+            source_lang = detect(text)
+        except:
+            source_lang = 'auto'
+
+        # Переводим текст
+        try:
+            translated_text = GoogleTranslator(source=source_lang, target=target_lang).translate(text)
+        except Exception as e:
+            await callback_query.message.edit_text(f"❌ Ошибка перевода: {e}")
+            await state.clear()
+            return
+
+        # Озвучиваем переведенный текст
+        processing_msg = await callback_query.message.answer("🔊 Создаю голосовое сообщение...")
+
+        try:
+            tts = gTTS(text=translated_text, lang=target_lang, slow=False)
+            voice_path = f"voice_{callback_query.from_user.id}_{int(time.time())}.mp3"
+            tts.save(voice_path)
+
+            # Отправляем результат
+            lang_names = {
+                'en': 'Английский', 'de': 'Немецкий', 'fr': 'Французский',
+                'es': 'Испанский', 'it': 'Итальянский', 'az': 'Азербайджанский',
+                'ru': 'Русский', 'tr': 'Турецкий', 'zh': 'Китайский'
+            }
+
+            await callback_query.message.answer_voice(
+                voice=FSInputFile(voice_path),
+                caption=f"🌍 Перевод на {lang_names.get(target_lang, target_lang)}\n"
+                        f"📝 Оригинал: {text}\n"
+                        f"🔊 Озвучка: {translated_text}"
+            )
+
+            # Логируем действие
+            stats_manager.log_action(
+                user_id=callback_query.from_user.id,
+                username=callback_query.from_user.username,
+                action_type='tts_translation',
+                details=f"from {source_lang} to {target_lang}, length: {len(text)}"
+            )
+
+            # Удаляем временный файл
+            os.remove(voice_path)
+            await processing_msg.delete()
+
+        except Exception as e:
+            error_logger.error(f"Ошибка TTS озвучки: {e}")
+            await callback_query.message.answer("❌ Ошибка при создании голосового сообщения")
+
+        await state.clear()
+        await callback_query.answer()
+
+    except Exception as e:
+        error_logger.error(f"Ошибка TTS перевода: {e}")
+        await callback_query.message.answer("❌ Ошибка при обработке")
+        await state.clear()
+
+@dp.callback_query(F.data == "cancel_tts")
+async def cancel_tts(callback_query: types.CallbackQuery, state: FSMContext):
+    """Отмена TTS"""
+    await state.clear()
+    await callback_query.message.edit_text(
+        "🎛️ <b>Главное меню</b>",
+        reply_markup=get_main_inline_menu(),
+        parse_mode="HTML"
     )
     await callback_query.answer()
 
@@ -1291,17 +1353,38 @@ async def handle_photo(message: types.Message):
 
 @dp.message(Command("vtrans"))
 async def start_vtrans(message: types.Message):
-    update_stats(message.from_user.id, "/vtrans")
+    stats_manager.log_action(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        action_type='vtrans_command'
+    )
+
     await message.reply("🎤 Отправь голосовое сообщение на русском, я переведу его на английский.")
 
+
 @dp.message(lambda msg: msg.voice or msg.audio)
-async def handle_voice(message: types.Message):
+async def handle_voice(message: types.Message, state: FSMContext):
+
+
+
+    current_state = await state.get_state()
+    if current_state == TTSStates.waiting_for_tts_text:
+        return
+
+    # Остальной код обработчика голосовых сообщений...
     user_id = message.from_user.id
     file_path_ogg = f"voice_{user_id}.ogg"
     file_path_wav = f"voice_{user_id}.wav"
     tts_path = f"translated_{user_id}.mp3"
 
     try:
+        # Логируем действие
+        stats_manager.log_action(
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            action_type='voice_translation'
+        )
+
         voice = message.voice or message.audio
         file_info = await bot.get_file(voice.file_id)
         await bot.download_file(file_info.file_path, file_path_ogg)
@@ -1355,10 +1438,8 @@ async def handle_voice(message: types.Message):
                 except Exception:
                     pass
 
-
 @dp.message(Command("stats"))
 async def show_detailed_stats(message: types.Message):
-    """Расширенная статистика бота"""
     stats_manager.log_action(
         user_id=message.from_user.id,
         username=message.from_user.username,
@@ -1586,16 +1667,6 @@ async def handle_all_text_messages(message: types.Message, state: FSMContext):
             parse_mode="HTML",
             reply_markup=get_main_inline_menu()
         )
-
-
-async def main():
-    """Основная функция запуска бота"""
-    print("🔄 Проверка базы данных...")
-    check_and_show_stats()
-
-    print("🚀 Запуск бота...")
-    await dp.start_polling(bot)
-
 
 if __name__ == '__main__':
     import asyncio
